@@ -1,0 +1,26 @@
+# Enable WORKSPACE support (disabled by default in Bazel 8)
+common --enable_workspace
+
+# C++ settings
+build --cxxopt=-std=c++20
+build --host_cxxopt=-std=c++20
+
+# Debug build configuration (-c dbg)
+build:dbg --copt=-O0
+build:dbg --cxxopt=-O0
+build:dbg --copt=-g
+build:dbg --cxxopt=-g
+build:dbg --copt=-fno-omit-frame-pointer
+build:dbg --cxxopt=-fno-omit-frame-pointer
+build:dbg --strip=never
+
+# Optimized build configuration (-c opt)
+build:opt --copt=-O3
+build:opt --cxxopt=-O3
+build:opt --copt=-g
+build:opt --cxxopt=-g
+build:opt --copt=-march=native
+build:opt --cxxopt=-march=native
+build:opt --copt=-ffast-math
+build:opt --cxxopt=-ffast-math
+build:opt --strip=never

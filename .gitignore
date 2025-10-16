@@ -1,0 +1,25 @@
+# Claude Code
+.claude/
+
+# Bazel
+/bazel-*
+compile_commands.json
+/external
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
