@@ -75,6 +75,8 @@ public:
   column_vector operator&(const column_vector& other) const;
   column_vector operator%(const column_vector& other) const;
   column_vector operator|(const column_vector& other) const;
+
+  bool present(std::size_t index) const noexcept;
 };
 
 // Default constructor with optional allocator
@@ -290,6 +292,11 @@ column_vector<Policy>
 column_vector<Policy>::operator|(const column_vector& other) const {
   // TODO: Implement element-wise bitwise OR
   return column_vector{allocator_};
+}
+
+template <concepts::ColumnPolicy Policy>
+bool column_vector<Policy>::present(std::size_t index) const noexcept {
+  return present_[index];
 }
 
 } // namespace franklin
