@@ -186,24 +186,26 @@ void* buddy_allocator::allocate(std::size_t size) {
   std::size_t target_level = size_to_level(size);
 
   // Find the first level with a free block, starting from target_level
+  // Search upward (toward level 0 = larger blocks)
   std::size_t alloc_level = target_level;
-  while (alloc_level < num_levels_ && free_lists_[alloc_level].empty()) {
-    ++alloc_level;
-  }
-
-  if (alloc_level >= num_levels_) {
-    return nullptr; // No free blocks available
+  while (free_lists_[alloc_level].empty()) {
+    if (alloc_level == 0) {
+      return nullptr; // No free blocks available
+    }
+    --alloc_level;
   }
 
   // Split blocks until we reach the target level
-  while (alloc_level > target_level) {
+  // Level 0 = largest, level N = smallest, so we split DOWN (increasing level
+  // numbers)
+  while (alloc_level < target_level) {
     // Take a block from the current level
     std::size_t block_index = free_lists_[alloc_level].back();
     free_lists_[alloc_level].pop_back();
 
     // Split it
     split_block(alloc_level, block_index);
-    --alloc_level;
+    ++alloc_level;
   }
 
   // Allocate the block at target_level
