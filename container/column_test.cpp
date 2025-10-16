@@ -362,21 +362,17 @@ TEST(ColumnVectorTest, PresentOutOfBoundsTriggersAssertion) {
 }
 
 // TEST 3: present() after default construction with size 0
-// BUG: Accessing present(0) on empty vector causes UB
-TEST(ColumnVectorTest, PresentOnEmptyVectorCausesUndefinedBehavior) {
+TEST(ColumnVectorTest, PresentOnEmptyVectorTriggersAssertion) {
   Int32Column col(0); // Empty vector
 
-  // Expected: Should handle gracefully or be documented as precondition
-  // Actual: Undefined behavior - present_ is empty, so present_[0] is invalid
-
-  // This will trigger ASAN/UBSAN
-  bool result = col.present(0); // Out of bounds on empty vector
-  (void)result;
+  // Accessing present(0) on empty vector should trigger assertion
+  EXPECT_DEATH(
+      { col.present(0); }, // Out of bounds on empty vector
+      "present\\(\\) index out of bounds");
 }
 
 // TEST 4: State inconsistency between data_ and present_ after copy assignment
-// BUG: If vectors have different sizes, present_ state becomes inconsistent
-TEST(ColumnVectorTest, PresentStateInconsistentAfterCopyAssignment) {
+TEST(ColumnVectorTest, PresentStateAfterCopyAssignment) {
   Int32Column col1(10, 42); // 10 elements, all present
   Int32Column col2(5, 99);  // 5 elements, all present
 
@@ -386,40 +382,30 @@ TEST(ColumnVectorTest, PresentStateInconsistentAfterCopyAssignment) {
   // Copy smaller vector to larger vector
   col1 = col2; // Now col1 should have 5 elements
 
-  // Expected: present(9) should either be false or cause an error
-  //           because col1 now only has 5 elements
-  // Actual: Depends on whether present_ was properly resized
-  //         If present_ still has 10 elements, present(9) returns stale data
+  // After assignment, present_ should be resized to match
+  // Accessing index 9 (which was valid before) should now trigger assertion
+  EXPECT_DEATH(
+      { col1.present(9); }, // Index that was valid before but not after
+      "present\\(\\) index out of bounds");
 
-  // This tests whether present_ correctly tracks the new size
-  bool result = col1.present(9); // Index that was valid before but not after
-
-  // If the implementation is correct, this should either:
-  // 1. Return false (if present_ was resized correctly)
-  // 2. Cause UB (if present_ size doesn't match data_ size)
-  // The bug is that we can access stale present_ data
-  (void)result;
+  // Valid index should still work
+  EXPECT_TRUE(col1.present(4)) << "col1[4] should be present after assignment";
 }
 
 // TEST 5: present() after move constructor - moved-from object state
-// BUG: Accessing present() on moved-from object causes UB
-TEST(ColumnVectorTest, PresentOnMovedFromObjectCausesUndefinedBehavior) {
+TEST(ColumnVectorTest, PresentAfterMoveConstructor) {
   Int32Column col1(10, 42);
   Int32Column col2(std::move(col1)); // col1 is now moved-from
 
-  // Expected: col1 should be in a valid but unspecified state
-  //           Accessing it might be UB or return false
-  // Actual: Depends on whether std::vector::move leaves empty vector
-
-  // This is technically allowed by the standard (moved-from state is valid)
-  // but demonstrates a common source of bugs
+  // col2 should have the moved data
   EXPECT_TRUE(col2.present(0)) << "col2[0] should be present after move";
+  EXPECT_TRUE(col2.present(9)) << "col2[9] should be present after move";
 
-  // Accessing moved-from object - technically allowed but dangerous
-  // If present_ is empty after move, this is UB
-  // If present_ still has size but wrong data, this returns garbage
-  bool result = col1.present(0); // Potentially UB or false
-  (void)result;
+  // col1 is in a valid but unspecified state after move
+  // Typically std::vector::move leaves it empty, so accessing would be UB
+  // We can't reliably test this without knowing the moved-from state
+  // Just verify col2 works correctly
+  SUCCEED();
 }
 
 // TEST 6: Performance - repeated present() calls should be O(1)
@@ -497,33 +483,18 @@ TEST(ColumnVectorTest, PresentStatePreservedAfterCopyConstructor) {
       << "Copied column should preserve present state at index 9";
 }
 
-// TEST 10: present() on very large index with small column
-// BUG: Demonstrates severity of missing bounds check
-TEST(ColumnVectorTest, PresentWithLargeIndexOnSmallColumnShowsSeverity) {
+// TEST 10: present() with out-of-bounds indices triggers assertion
+TEST(ColumnVectorTest, PresentWithVariousOutOfBoundsIndices) {
   Int32Column col(1, 42); // Only 1 element at index 0
 
-  // Accessing with increasingly large out-of-bounds indices
-  // This demonstrates that the bug allows arbitrary memory reads
-
-  // These will all cause UB and potentially read arbitrary memory
-  // ASAN/UBSAN will catch these
-
   // Index 1 - slightly out of bounds
-  volatile bool r1 = col.present(1);
+  EXPECT_DEATH({ col.present(1); }, "present\\(\\) index out of bounds");
 
   // Index 1000 - way out of bounds
-  volatile bool r2 = col.present(1000);
+  EXPECT_DEATH({ col.present(1000); }, "present\\(\\) index out of bounds");
 
-  // Index SIZE_MAX - maximum possible index
-  // This will almost certainly crash or cause ASAN to abort
-  // Commenting out because it's too dangerous even for adversarial testing
-  // volatile bool r3 = col.present(SIZE_MAX);
-
-  (void)r1;
-  (void)r2;
-
-  // The test itself can't assert anything because behavior is undefined
-  // But running under ASAN will expose the bug clearly
+  // Valid index should work
+  EXPECT_TRUE(col.present(0)) << "Index 0 should be valid";
 }
 
 } // namespace franklin
