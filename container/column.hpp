@@ -1,4 +1,5 @@
 #include "container/dynamic_bitset.hpp"
+#include "core/compiler_macros.hpp"
 #include <concepts>
 #include <cstdint>
 #include <immintrin.h>
@@ -76,7 +77,13 @@ public:
   column_vector operator%(const column_vector& other) const;
   column_vector operator|(const column_vector& other) const;
 
+  // Check if value at index is present (not missing/null)
+  // Performs bounds checking in debug builds
   bool present(std::size_t index) const noexcept;
+
+  // Unchecked version - no bounds checking, faster
+  // Precondition: index < size()
+  bool present_unchecked(std::size_t index) const noexcept;
 };
 
 // Default constructor with optional allocator
@@ -296,6 +303,14 @@ column_vector<Policy>::operator|(const column_vector& other) const {
 
 template <concepts::ColumnPolicy Policy>
 bool column_vector<Policy>::present(std::size_t index) const noexcept {
+  FRANKLIN_DEBUG_ASSERT(index < present_.size() &&
+                        "present() index out of bounds");
+  return present_[index];
+}
+
+template <concepts::ColumnPolicy Policy>
+bool column_vector<Policy>::present_unchecked(
+    std::size_t index) const noexcept {
   return present_[index];
 }
 
