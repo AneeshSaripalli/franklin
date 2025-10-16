@@ -95,7 +95,7 @@ column_vector<Policy>::column_vector(const allocator_type& alloc)
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>::column_vector(std::size_t size,
                                      const allocator_type& alloc)
-    : allocator_(alloc), data_(size, alloc), present_(size, alloc) {}
+    : allocator_(alloc), data_(size, alloc), present_(size, true, alloc) {}
 
 // Constructor with size, value, and allocator
 template <concepts::ColumnPolicy Policy>

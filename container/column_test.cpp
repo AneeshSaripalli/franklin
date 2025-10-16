@@ -11,7 +11,7 @@ struct Int32ColumnPolicy {
   using value_type = std::int32_t;
   using allocator_type = std::allocator<std::int32_t>;
   static constexpr bool is_view = false;
-  static constexpr bool allow_missing = false;
+  static constexpr bool allow_missing = true;
   static constexpr bool use_avx512 = false;
   static constexpr bool assume_aligned = true;
 };
@@ -21,7 +21,7 @@ struct FloatColumnPolicy {
   using value_type = float;
   using allocator_type = std::allocator<float>;
   static constexpr bool is_view = false;
-  static constexpr bool allow_missing = false;
+  static constexpr bool allow_missing = true;
   static constexpr bool use_avx512 = false;
   static constexpr bool assume_aligned = true;
 };
@@ -351,22 +351,14 @@ TEST(ColumnVectorTest, PresentAfterSizeConstructorShouldBeTrue) {
       << "Element 9 should be present after size construction";
 }
 
-// TEST 2: Out of bounds access causes undefined behavior (no bounds checking)
-// BUG: present() has no bounds checking and is marked noexcept
-TEST(ColumnVectorTest, PresentOutOfBoundsCausesUndefinedBehavior) {
+// TEST 2: Out of bounds access triggers assertion in debug builds
+TEST(ColumnVectorTest, PresentOutOfBoundsTriggersAssertion) {
   Int32Column col(10);
 
-  // Expected: Should either throw, return false, or have some defined behavior
-  // Actual: Undefined behavior - accesses memory past the end of present_
-  // vector This test will likely crash, corrupt memory, or return garbage
-
-  // ASAN/UBSAN should catch this if enabled
-  // In release mode, this might appear to work but is reading invalid memory
-  bool result = col.present(100); // Way out of bounds
-
-  // We can't assert anything here because the behavior is undefined
-  // The test exists to demonstrate the bug with sanitizers
-  (void)result; // Suppress unused warning
+  // In debug builds, FRANKLIN_DEBUG_ASSERT should catch out-of-bounds access
+  EXPECT_DEATH(
+      { col.present(100); }, // Way out of bounds
+      "present\\(\\) index out of bounds");
 }
 
 // TEST 3: present() after default construction with size 0
