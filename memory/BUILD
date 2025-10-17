@@ -1,4 +1,13 @@
 cc_library(
+    name = "memory",
+    hdrs = [
+        "aligned_allocator.hpp",
+    ],
+    copts = ["-std=c++20"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "buddy_allocator",
     srcs = ["buddy_allocator.cpp"],
     hdrs = [
