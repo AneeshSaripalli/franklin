@@ -20,10 +20,26 @@ namespace {
 using Float32Policy = Float32DefaultPolicy;
 using Float32Column = column_vector<Float32Policy>;
 
-// Typical L3 cache sizes: 8-32 MB
-// Use 128 MB per column (32M floats * 4 bytes = 128 MB)
-// This ensures we're memory-bound, not cache-bound
-constexpr size_t COLUMN_SIZE = 32 * 1024 * 1024; // 32M elements = 128 MB
+// Cache sizes (typical):
+// L1: 32 KB per core
+// L2: 256 KB - 1 MB per core
+// L3: 8-32 MB shared
+//
+// Test sizes (elements of float32):
+// 8K   =  32 KB  = fits in L1
+// 16K  =  64 KB  = exceeds L1
+// 32K  = 128 KB  = fits in L2
+// 64K  = 256 KB  = fits in L2
+// 128K = 512 KB  = fits in L2
+// 256K =   1 MB  = fits in L2/L3
+// 512K =   2 MB  = fits in L3
+// 1M   =   4 MB  = fits in L3
+// 2M   =   8 MB  = fits in L3
+// 4M   =  16 MB  = fits in L3
+// 8M   =  32 MB  = at L3 boundary
+// 16M  =  64 MB  = exceeds L3
+// 32M  = 128 MB  = exceeds L3
+// 64M  = 256 MB  = exceeds L3
 
 // ============================================================================
 // NAIVE IMPLEMENTATION: Two separate loops in separate functions
@@ -127,11 +143,14 @@ __attribute__((noinline)) void fused_fma_single_loop(const Float32Column& a,
 class KernelFusionFixture : public benchmark::Fixture {
 public:
   void SetUp(const ::benchmark::State& state) override {
-    // Initialize columns with data larger than L3 cache
-    a_ = Float32Column(COLUMN_SIZE, 2.0f);
-    b_ = Float32Column(COLUMN_SIZE, 3.0f);
-    c_ = Float32Column(COLUMN_SIZE, 5.0f);
-    result_ = Float32Column(COLUMN_SIZE, 0.0f);
+    // Get array size from benchmark argument
+    size_t array_size = state.range(0);
+
+    // Initialize columns with specified size
+    a_ = Float32Column(array_size, 2.0f);
+    b_ = Float32Column(array_size, 3.0f);
+    c_ = Float32Column(array_size, 5.0f);
+    result_ = Float32Column(array_size, 0.0f);
 
     // Verify data is initialized
     benchmark::DoNotOptimize(a_.data().data());
@@ -150,8 +169,10 @@ protected:
 // BENCHMARKS
 // ============================================================================
 
-BENCHMARK_F(KernelFusionFixture, Naive_TwoLoops_MulThenAdd)
+BENCHMARK_DEFINE_F(KernelFusionFixture, Naive_TwoLoops_MulThenAdd)
 (benchmark::State& state) {
+  const size_t column_size = state.range(0);
+
   for (auto _ : state) {
     naive_fma_two_loops(a_, b_, c_, result_);
     // Prevent compiler from optimizing away the result
@@ -164,16 +185,19 @@ BENCHMARK_F(KernelFusionFixture, Naive_TwoLoops_MulThenAdd)
     state.SkipWithError("Incorrect result in Naive_TwoLoops");
   }
 
-  // Report memory bandwidth: 4 loads + 2 stores per iteration
-  const size_t bytes_per_iter = COLUMN_SIZE * sizeof(float) * 6;
+  // Report bandwidth: 3 input arrays + 1 output array = 4 arrays * 4 bytes = 16
+  // bytes/element
+  const size_t bytes_per_iter = column_size * sizeof(float) * 4;
   state.SetBytesProcessed(state.iterations() * bytes_per_iter);
-  state.counters["elements"] = benchmark::Counter(COLUMN_SIZE);
-  state.counters["loads_per_element"] = benchmark::Counter(4.0);
-  state.counters["stores_per_element"] = benchmark::Counter(2.0);
+  state.counters["elements"] = benchmark::Counter(column_size);
+  state.counters["size_kb"] =
+      benchmark::Counter(column_size * sizeof(float) / 1024.0);
 }
 
-BENCHMARK_F(KernelFusionFixture, Fused_SingleLoop_FMA)
+BENCHMARK_DEFINE_F(KernelFusionFixture, Fused_SingleLoop_FMA)
 (benchmark::State& state) {
+  const size_t column_size = state.range(0);
+
   for (auto _ : state) {
     fused_fma_single_loop(a_, b_, c_, result_);
     // Prevent compiler from optimizing away the result
@@ -186,54 +210,49 @@ BENCHMARK_F(KernelFusionFixture, Fused_SingleLoop_FMA)
     state.SkipWithError("Incorrect result in Fused_SingleLoop");
   }
 
-  // Report memory bandwidth: 3 loads + 1 store per iteration
-  const size_t bytes_per_iter = COLUMN_SIZE * sizeof(float) * 4;
+  // Report bandwidth: 3 input arrays + 1 output array = 4 arrays * 4 bytes = 16
+  // bytes/element
+  const size_t bytes_per_iter = column_size * sizeof(float) * 4;
   state.SetBytesProcessed(state.iterations() * bytes_per_iter);
-  state.counters["elements"] = benchmark::Counter(COLUMN_SIZE);
-  state.counters["loads_per_element"] = benchmark::Counter(3.0);
-  state.counters["stores_per_element"] = benchmark::Counter(1.0);
+  state.counters["elements"] = benchmark::Counter(column_size);
+  state.counters["size_kb"] =
+      benchmark::Counter(column_size * sizeof(float) / 1024.0);
 }
 
-// ============================================================================
-// ANALYSIS BENCHMARK: Measure memory traffic difference
-// ============================================================================
+// Register benchmarks with size parameters
+// Test sizes from L1 cache (8K elements = 32KB) to beyond L3 (64M elements =
+// 256MB)
+BENCHMARK_REGISTER_F(KernelFusionFixture, Naive_TwoLoops_MulThenAdd)
+    ->Arg(8 * 1024)          // 8K elements = 32 KB (L1)
+    ->Arg(16 * 1024)         // 16K elements = 64 KB
+    ->Arg(32 * 1024)         // 32K elements = 128 KB (L2)
+    ->Arg(64 * 1024)         // 64K elements = 256 KB (L2)
+    ->Arg(128 * 1024)        // 128K elements = 512 KB (L2)
+    ->Arg(256 * 1024)        // 256K elements = 1 MB (L2/L3)
+    ->Arg(512 * 1024)        // 512K elements = 2 MB (L3)
+    ->Arg(1024 * 1024)       // 1M elements = 4 MB (L3)
+    ->Arg(2 * 1024 * 1024)   // 2M elements = 8 MB (L3)
+    ->Arg(4 * 1024 * 1024)   // 4M elements = 16 MB (L3)
+    ->Arg(8 * 1024 * 1024)   // 8M elements = 32 MB (L3 boundary)
+    ->Arg(16 * 1024 * 1024)  // 16M elements = 64 MB (exceeds L3)
+    ->Arg(32 * 1024 * 1024)  // 32M elements = 128 MB (exceeds L3)
+    ->Arg(64 * 1024 * 1024); // 64M elements = 256 MB (exceeds L3)
 
-BENCHMARK_F(KernelFusionFixture, Analysis_MemoryTraffic_Naive)
-(benchmark::State& state) {
-  for (auto _ : state) {
-    naive_fma_two_loops(a_, b_, c_, result_);
-    benchmark::DoNotOptimize(result_.data().data());
-    benchmark::ClobberMemory();
-  }
-
-  // Naive approach memory traffic:
-  // Loop 1 (multiply): Load a, load b, store result = 3 ops
-  // Loop 2 (add): Load result, load c, store result = 3 ops
-  // Total: 4 loads + 2 stores per element
-  state.counters["loads_per_iter"] = benchmark::Counter(COLUMN_SIZE * 4);
-  state.counters["stores_per_iter"] = benchmark::Counter(COLUMN_SIZE * 2);
-  state.counters["total_memory_ops"] = benchmark::Counter(COLUMN_SIZE * 6);
-  state.counters["memory_traffic_reduction"] =
-      benchmark::Counter(0.0); // Baseline
-}
-
-BENCHMARK_F(KernelFusionFixture, Analysis_MemoryTraffic_Fused)
-(benchmark::State& state) {
-  for (auto _ : state) {
-    fused_fma_single_loop(a_, b_, c_, result_);
-    benchmark::DoNotOptimize(result_.data().data());
-    benchmark::ClobberMemory();
-  }
-
-  // Fused approach memory traffic:
-  // Single loop: Load a, load b, load c, store result = 4 ops
-  // Total: 3 loads + 1 store per element
-  state.counters["loads_per_iter"] = benchmark::Counter(COLUMN_SIZE * 3);
-  state.counters["stores_per_iter"] = benchmark::Counter(COLUMN_SIZE * 1);
-  state.counters["total_memory_ops"] = benchmark::Counter(COLUMN_SIZE * 4);
-  // 33% reduction: (6 - 4) / 6 = 0.33
-  state.counters["memory_traffic_reduction"] = benchmark::Counter(0.33);
-}
+BENCHMARK_REGISTER_F(KernelFusionFixture, Fused_SingleLoop_FMA)
+    ->Arg(8 * 1024)          // 8K elements = 32 KB (L1)
+    ->Arg(16 * 1024)         // 16K elements = 64 KB
+    ->Arg(32 * 1024)         // 32K elements = 128 KB (L2)
+    ->Arg(64 * 1024)         // 64K elements = 256 KB (L2)
+    ->Arg(128 * 1024)        // 128K elements = 512 KB (L2)
+    ->Arg(256 * 1024)        // 256K elements = 1 MB (L2/L3)
+    ->Arg(512 * 1024)        // 512K elements = 2 MB (L3)
+    ->Arg(1024 * 1024)       // 1M elements = 4 MB (L3)
+    ->Arg(2 * 1024 * 1024)   // 2M elements = 8 MB (L3)
+    ->Arg(4 * 1024 * 1024)   // 4M elements = 16 MB (L3)
+    ->Arg(8 * 1024 * 1024)   // 8M elements = 32 MB (L3 boundary)
+    ->Arg(16 * 1024 * 1024)  // 16M elements = 64 MB (exceeds L3)
+    ->Arg(32 * 1024 * 1024)  // 32M elements = 128 MB (exceeds L3)
+    ->Arg(64 * 1024 * 1024); // 64M elements = 256 MB (exceeds L3)
 
 } // namespace
 } // namespace franklin
