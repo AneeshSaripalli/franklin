@@ -179,11 +179,28 @@ public:
     return *this;
   }
 
-  constexpr dynamic_bitset& set() noexcept {
-    for (auto& block : blocks_) {
-      block = ~block_type(0);
+  dynamic_bitset& set() noexcept {
+    if (blocks_.empty()) {
+      return *this;
     }
-    zero_unused_bits();
+
+    block_type* data = blocks_.data();
+    const size_type num_blocks = blocks_.size();
+
+    // Broadcast all-ones pattern to AVX2 register
+    const __m256i all_ones = _mm256_set1_epi64x(-1LL);
+
+    // Store full cache lines (8 blocks = 64 bytes) using aligned stores
+    // num_blocks is always a multiple of 8, so no tail handling needed
+    for (size_type i = 0; i < num_blocks; i += 8) {
+      // First half of cache line (32 bytes = 4 blocks)
+      _mm256_store_si256(reinterpret_cast<__m256i*>(data + i), all_ones);
+      // Second half of cache line (32 bytes = 4 blocks)
+      _mm256_store_si256(reinterpret_cast<__m256i*>(data + i + 4), all_ones);
+    }
+
+    // Note: We don't call zero_unused_bits() because padding bits are masked
+    // off in summary operations (count(), all(), any(), none())
     return *this;
   }
 
@@ -213,11 +230,34 @@ public:
     return *this;
   }
 
-  constexpr dynamic_bitset& flip() noexcept {
-    for (auto& block : blocks_) {
-      block = ~block;
+  dynamic_bitset& flip() noexcept {
+    if (blocks_.empty()) {
+      return *this;
     }
-    zero_unused_bits();
+
+    block_type* data = blocks_.data();
+    const size_type num_blocks = blocks_.size();
+
+    // Broadcast all-ones pattern to AVX2 register for XOR flipping
+    const __m256i all_ones = _mm256_set1_epi64x(-1LL);
+
+    // Flip full cache lines (8 blocks = 64 bytes) using AVX2 XOR
+    // num_blocks is always a multiple of 8, so no tail handling needed
+    for (size_type i = 0; i < num_blocks; i += 8) {
+      // First half of cache line (32 bytes = 4 blocks)
+      __m256i vec0 = _mm256_load_si256(reinterpret_cast<__m256i*>(data + i));
+      vec0 = _mm256_xor_si256(vec0, all_ones);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(data + i), vec0);
+
+      // Second half of cache line (32 bytes = 4 blocks)
+      __m256i vec1 =
+          _mm256_load_si256(reinterpret_cast<__m256i*>(data + i + 4));
+      vec1 = _mm256_xor_si256(vec1, all_ones);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(data + i + 4), vec1);
+    }
+
+    // Note: We don't call zero_unused_bits() because padding bits are masked
+    // off in summary operations (count(), all(), any(), none())
     return *this;
   }
 
