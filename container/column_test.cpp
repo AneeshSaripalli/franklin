@@ -16,6 +16,7 @@ struct Int32ColumnPolicy {
   static constexpr bool allow_missing = true;
   static constexpr bool use_avx512 = false;
   static constexpr bool assume_aligned = true;
+  static constexpr DataTypeEnum::Enum policy_id = DataTypeEnum::Int32Default;
 };
 
 // Test policy for column_vector with float
@@ -26,6 +27,7 @@ struct FloatColumnPolicy {
   static constexpr bool allow_missing = true;
   static constexpr bool use_avx512 = false;
   static constexpr bool assume_aligned = true;
+  static constexpr DataTypeEnum::Enum policy_id = DataTypeEnum::Float32Default;
 };
 
 // Test policy for column_vector with bf16
@@ -36,6 +38,7 @@ struct BF16ColumnPolicy {
   static constexpr bool allow_missing = true;
   static constexpr bool use_avx512 = false;
   static constexpr bool assume_aligned = true;
+  static constexpr DataTypeEnum::Enum policy_id = DataTypeEnum::BF16Default;
 };
 
 using Int32Column = column_vector<Int32ColumnPolicy>;
@@ -577,7 +580,8 @@ TEST(ColumnVectorTest, PresentStateAfterCopyAssignment) {
 
   // After assignment, present_ should be resized to match
   // Accessing index 9 (which was valid before) should now return false
-  EXPECT_FALSE(col1.present(9)) << "Index 9 should be out of bounds after assignment";
+  EXPECT_FALSE(col1.present(9))
+      << "Index 9 should be out of bounds after assignment";
 
   // Valid index should still work
   EXPECT_TRUE(col1.present(4)) << "col1[4] should be present after assignment";

@@ -1,6 +1,12 @@
+#ifndef FRANKLIN_CONTAINER_COLUMN_HPP
+#define FRANKLIN_CONTAINER_COLUMN_HPP
+
 #include "container/dynamic_bitset.hpp"
 #include "core/bf16.hpp"
 #include "core/compiler_macros.hpp"
+#include "core/data_type_enum.hpp"
+#include "memory/aligned_allocator.hpp"
+#include <bit>
 #include <concepts>
 #include <cstdint>
 #include <immintrin.h>
@@ -19,6 +25,7 @@ concept ColumnPolicy = requires {
   requires std::is_same_v<decltype(T::allow_missing), const bool>;
   requires std::is_same_v<decltype(T::use_avx512), const bool>;
   requires std::is_same_v<decltype(T::assume_aligned), const bool>;
+  requires std::is_same_v<decltype(T::policy_id), const DataTypeEnum::Enum>;
 };
 
 template <typename T>
@@ -30,6 +37,37 @@ concept PipelinePolicy = requires {
 };
 
 } // namespace concepts
+
+// Standard policy definitions - using cache-line aligned allocator
+struct Int32DefaultPolicy {
+  using value_type = std::int32_t;
+  using allocator_type = memory::aligned_allocator<value_type, 64>;
+  static constexpr bool is_view = false;
+  static constexpr bool allow_missing = true;
+  static constexpr bool use_avx512 = false;
+  static constexpr bool assume_aligned = true;
+  static constexpr DataTypeEnum::Enum policy_id = DataTypeEnum::Int32Default;
+};
+
+struct Float32DefaultPolicy {
+  using value_type = float;
+  using allocator_type = memory::aligned_allocator<value_type, 64>;
+  static constexpr bool is_view = false;
+  static constexpr bool allow_missing = true;
+  static constexpr bool use_avx512 = false;
+  static constexpr bool assume_aligned = true;
+  static constexpr DataTypeEnum::Enum policy_id = DataTypeEnum::Float32Default;
+};
+
+struct BF16DefaultPolicy {
+  using value_type = bf16;
+  using allocator_type = memory::aligned_allocator<value_type, 64>;
+  static constexpr bool is_view = false;
+  static constexpr bool allow_missing = true;
+  static constexpr bool use_avx512 = false;
+  static constexpr bool assume_aligned = true;
+  static constexpr DataTypeEnum::Enum policy_id = DataTypeEnum::BF16Default;
+};
 
 template <concepts::ColumnPolicy Policy> class column_vector {
 public:
@@ -90,6 +128,17 @@ public:
   // Precondition: index < present_.size()
   // Use this in hot paths where you've already validated the index
   bool present_unchecked(std::size_t index) const noexcept;
+
+  // Get runtime policy identifier for type erasure
+  static constexpr DataTypeEnum::Enum policy() noexcept {
+    return Policy::policy_id;
+  }
+
+  // Public accessors for data (needed for vectorization)
+  const std::vector<value_type, allocator_type>& data() const noexcept {
+    return data_;
+  }
+  std::vector<value_type, allocator_type>& data() noexcept { return data_; }
 };
 
 // Default constructor with optional allocator
@@ -101,14 +150,43 @@ column_vector<Policy>::column_vector(const allocator_type& alloc)
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>::column_vector(std::size_t size,
                                      const allocator_type& alloc)
-    : allocator_(alloc), data_(size, alloc), present_(size, true, alloc) {}
+    : allocator_(alloc) {
+  // Round up to cache-line boundary for proper SIMD alignment
+  // 64-byte cache line / sizeof(value_type) elements per cache line
+  constexpr std::size_t elements_per_cache_line = 64 / sizeof(value_type);
+  std::size_t rounded_size =
+      ((size + elements_per_cache_line - 1) / elements_per_cache_line) *
+      elements_per_cache_line;
+
+  data_ = std::vector<value_type, allocator_type>(rounded_size, alloc);
+  present_ = std::vector<bool, bool_allocator_type>(rounded_size, true,
+                                                    bool_allocator_type(alloc));
+  // Mark only the requested elements as present
+  for (std::size_t i = size; i < rounded_size; ++i) {
+    present_[i] = false;
+  }
+}
 
 // Constructor with size, value, and allocator
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>::column_vector(std::size_t size, const value_type& value,
                                      const allocator_type& alloc)
-    : allocator_(alloc), data_(size, value, alloc),
-      present_(size, true, alloc) {}
+    : allocator_(alloc) {
+  // Round up to cache-line boundary for proper SIMD alignment
+  // 64-byte cache line / sizeof(value_type) elements per cache line
+  constexpr std::size_t elements_per_cache_line = 64 / sizeof(value_type);
+  std::size_t rounded_size =
+      ((size + elements_per_cache_line - 1) / elements_per_cache_line) *
+      elements_per_cache_line;
+
+  data_ = std::vector<value_type, allocator_type>(rounded_size, value, alloc);
+  present_ = std::vector<bool, bool_allocator_type>(rounded_size, true,
+                                                    bool_allocator_type(alloc));
+  // Mark only the requested elements as present
+  for (std::size_t i = size; i < rounded_size; ++i) {
+    present_[i] = false;
+  }
+}
 
 // Copy constructor with allocator
 template <concepts::ColumnPolicy Policy>
@@ -154,16 +232,18 @@ struct Int32Pipeline {
   using compute_register_type = __m256i;
   static constexpr std::size_t elements_per_iteration = 8;
 
-  FRANKLIN_FORCE_INLINE static storage_register_type load(const value_type* ptr) {
+  FRANKLIN_FORCE_INLINE static storage_register_type
+  load(const value_type* ptr) {
     return _mm256_load_si256(reinterpret_cast<const __m256i*>(ptr));
   }
 
-  FRANKLIN_FORCE_INLINE static compute_register_type transform_to(storage_register_type reg) {
+  FRANKLIN_FORCE_INLINE static compute_register_type
+  transform_to(storage_register_type reg) {
     return reg; // no-op for primitives
   }
 
-  FRANKLIN_FORCE_INLINE static compute_register_type op(compute_register_type a,
-                                         compute_register_type b) {
+  FRANKLIN_FORCE_INLINE static compute_register_type
+  op(compute_register_type a, compute_register_type b) {
     return _mm256_add_epi32(a, b);
   }
 
@@ -172,7 +252,8 @@ struct Int32Pipeline {
     return reg; // no-op for primitives
   }
 
-  FRANKLIN_FORCE_INLINE static void store(value_type* ptr, storage_register_type reg) {
+  FRANKLIN_FORCE_INLINE static void store(value_type* ptr,
+                                          storage_register_type reg) {
     _mm256_store_si256(reinterpret_cast<__m256i*>(ptr), reg);
   }
 };
@@ -184,7 +265,8 @@ struct BF16Pipeline {
   using compute_register_type = __m256;  // 8 fp32 values = 32 bytes
   static constexpr std::size_t elements_per_iteration = 8;
 
-  FRANKLIN_FORCE_INLINE static storage_register_type load(const value_type* ptr) {
+  FRANKLIN_FORCE_INLINE static storage_register_type
+  load(const value_type* ptr) {
     return _mm_load_si128(reinterpret_cast<const __m128i*>(ptr));
   }
 
@@ -196,8 +278,8 @@ struct BF16Pipeline {
     return _mm256_cvtpbh_ps(reinterpret_cast<__m128bh>(bf16_reg));
   }
 
-  FRANKLIN_FORCE_INLINE static compute_register_type op(compute_register_type a,
-                                         compute_register_type b) {
+  FRANKLIN_FORCE_INLINE static compute_register_type
+  op(compute_register_type a, compute_register_type b) {
     return _mm256_add_ps(a, b);
   }
 
@@ -211,7 +293,8 @@ struct BF16Pipeline {
     return reinterpret_cast<__m128i>(result);
   }
 
-  FRANKLIN_FORCE_INLINE static void store(value_type* ptr, storage_register_type reg) {
+  FRANKLIN_FORCE_INLINE static void store(value_type* ptr,
+                                          storage_register_type reg) {
     _mm_store_si128(reinterpret_cast<__m128i*>(ptr), reg);
   }
 };
@@ -222,13 +305,13 @@ static void vectorize(column_vector<ColPolicy> const& fst,
                       column_vector<ColPolicy>& out) {
 
   using value_type = typename ColPolicy::value_type;
-  const value_type* fst_ptr = fst.data_.data();
-  const value_type* snd_ptr = snd.data_.data();
-  value_type* out_ptr = out.data_.data();
+  const value_type* fst_ptr = fst.data().data();
+  const value_type* snd_ptr = snd.data().data();
+  value_type* out_ptr = out.data().data();
 
   std::size_t offset = 0;
   const std::size_t step = Pipeline::elements_per_iteration;
-  const std::size_t num_elements = out.data_.size();
+  const std::size_t num_elements = out.data().size();
 
   while (offset + step <= num_elements) {
     // Load from memory
@@ -242,7 +325,7 @@ static void vectorize(column_vector<ColPolicy> const& fst,
     // Perform operation in compute domain
     auto result_compute = Pipeline::op(a_compute, b_compute);
 
-    // Transform back to storage domain (e.g., fp32 -> bf16)
+    // Transform back to storage domain (e.g., bf16 -> fp32)
     auto result_storage = Pipeline::transform_from(result_compute);
 
     // Store to memory
@@ -251,7 +334,8 @@ static void vectorize(column_vector<ColPolicy> const& fst,
     offset += step;
   }
 
-  // TODO: Handle tail elements (when num_elements % step != 0)
+  // Note: No tail handling needed - buffers are cache-line aligned by design.
+  // The present_ bitmask handles validity of elements within the padded buffer.
 }
 
 template <concepts::ColumnPolicy ColPolicy, concepts::PipelinePolicy Pipeline>
@@ -259,12 +343,13 @@ static void vectorize_destructive(column_vector<ColPolicy>& mut,
                                   column_vector<ColPolicy> const& snd) {
 
   using value_type = typename ColPolicy::value_type;
-  value_type* mut_ptr = mut.data_.data();
-  const value_type* snd_ptr = snd.data_.data();
+  value_type* mut_ptr = mut.data().data();
+  const value_type* snd_ptr = snd.data().data();
 
   std::size_t offset = 0;
   const std::size_t step = Pipeline::elements_per_iteration;
-  const std::size_t num_elements = std::min(mut.data_.size(), snd.data_.size());
+  const std::size_t num_elements =
+      std::min(mut.data().size(), snd.data().size());
 
   while (offset + step <= num_elements) {
     // Load from both sources
@@ -287,7 +372,8 @@ static void vectorize_destructive(column_vector<ColPolicy>& mut,
     offset += step;
   }
 
-  // TODO: Handle tail elements (when num_elements % step != 0)
+  // Note: No tail handling needed - buffers are cache-line aligned by design.
+  // The present_ bitmask handles validity of elements within the padded buffer.
 }
 
 // Element-wise addition
@@ -344,3 +430,5 @@ bool column_vector<Policy>::present_unchecked(
 }
 
 } // namespace franklin
+
+#endif // FRANKLIN_CONTAINER_COLUMN_HPP

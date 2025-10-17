@@ -1,6 +1,7 @@
 #ifndef FRANKLIN_MEMORY_ALIGNED_ALLOCATOR_HPP
 #define FRANKLIN_MEMORY_ALIGNED_ALLOCATOR_HPP
 
+#include "core/compiler_macros.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <new>
@@ -10,7 +11,8 @@ namespace memory {
 
 /// Cache-line aligned allocator for optimal memory access patterns
 /// Modern x86-64 CPUs have 64-byte cache lines
-template <typename T, std::size_t Alignment = 64> class aligned_allocator {
+template <typename T, std::size_t Alignment = FRANKLIN_CACHE_LINE_SIZE>
+class aligned_allocator {
 public:
   using value_type = T;
   using size_type = std::size_t;
