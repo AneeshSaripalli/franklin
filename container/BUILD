@@ -4,7 +4,13 @@ cc_library(
         "column.hpp",
         "dynamic_bitset.hpp",
     ],
-    copts = ["-std=c++20"],
+    copts = [
+        "-std=c++20",
+        "-mavx2",
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512vpopcntdq",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "//core",
@@ -18,6 +24,9 @@ cc_test(
     copts = [
         "-std=c++20",
         "-mavx2",
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512vpopcntdq",
     ],
     deps = [
         ":container",
@@ -120,6 +129,9 @@ cc_binary(
     copts = [
         "-std=c++20",
         "-mavx2",
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512vpopcntdq",
         "-O3",
         "-march=native",
     ],

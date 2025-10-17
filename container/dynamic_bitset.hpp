@@ -10,6 +10,39 @@
 
 namespace franklin {
 
+namespace detail {
+// AVX512 VPOPCNTDQ-optimized helper for counting set bits
+// Process 4 blocks (32 bytes = 256 bits) at a time using _mm256_popcnt_epi64
+// Returns the total count of set bits in the first num_blocks blocks
+#pragma GCC push_options
+#pragma GCC target("avx2,avx512vpopcntdq")
+inline std::uint64_t simd_count_blocks(const std::uint64_t* data,
+                                       std::size_t num_blocks) {
+  __m256i vec_count = _mm256_setzero_si256();
+  const std::size_t simd_blocks = num_blocks / 4;
+
+  for (std::size_t i = 0; i < simd_blocks; ++i) {
+    __m256i vec =
+        _mm256_load_si256(reinterpret_cast<const __m256i*>(data + i * 4));
+    __m256i popcount = _mm256_popcnt_epi64(vec);
+    vec_count = _mm256_add_epi64(vec_count, popcount);
+  }
+
+  // Extract and sum the 4 accumulated counts
+  alignas(32) std::uint64_t counts[4];
+  _mm256_store_si256(reinterpret_cast<__m256i*>(counts), vec_count);
+  std::uint64_t result = counts[0] + counts[1] + counts[2] + counts[3];
+
+  // Handle remaining full blocks with scalar popcnt
+  for (std::size_t i = simd_blocks * 4; i < num_blocks; ++i) {
+    result += __builtin_popcountll(data[i]);
+  }
+
+  return result;
+}
+#pragma GCC pop_options
+} // namespace detail
+
 template <typename Policy> class dynamic_bitset {
 public:
   using block_type = std::uint64_t;
@@ -188,28 +221,35 @@ public:
     return *this;
   }
 
-  constexpr size_type count() const noexcept {
+  size_type count() const noexcept {
     if (num_bits_ == 0) {
       return 0;
     }
 
-    size_type result = 0;
     const size_type last_block_idx = block_index(num_bits_ - 1);
     const size_type remainder = num_bits_ & (bits_per_block - 1);
+    const block_type* data = blocks_.data();
 
-    // Count full blocks (all blocks before the last)
-    for (size_type i = 0; i < last_block_idx; ++i) {
-      result += __builtin_popcountll(blocks_[i]);
-    }
+    // AVX512 VPOPCNTDQ-optimized counting via helper function
+    // Overflow analysis:
+    // - Each popcnt returns max 64
+    // - Each uint64_t accumulator can hold (2^64-1)/64 =
+    // 288,230,376,151,711,743 counts
+    // - With 4 accumulators, that's 4 * 288,230,376,151,711,743 =
+    // 1,152,921,504,606,846,972 blocks
+    // - = 2^60 bits = 1,152,921,504,606,846,972 * 64 bits = 1 exabyte
+    // - This will never overflow on current hardware (max virtual memory << 1
+    // EB)
+    size_type result = detail::simd_count_blocks(data, last_block_idx);
 
     // Count the last block containing actual data
     if (remainder == 0) {
       // Last block is full (num_bits_ is multiple of 64)
-      result += __builtin_popcountll(blocks_[last_block_idx]);
+      result += __builtin_popcountll(data[last_block_idx]);
     } else {
       // Last block is partial, mask off bits beyond num_bits_
       block_type mask = (block_type(1) << remainder) - 1;
-      result += __builtin_popcountll(blocks_[last_block_idx] & mask);
+      result += __builtin_popcountll(data[last_block_idx] & mask);
     }
 
     return result;
