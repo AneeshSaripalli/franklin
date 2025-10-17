@@ -13,6 +13,9 @@ compile_commands.json
 *.dylib
 *.exe
 
+# Ad-hoc test executables and files in root
+/test_*
+
 # IDE
 .vscode/
 .idea/
