@@ -14,8 +14,6 @@ namespace detail {
 // AVX512 VPOPCNTDQ-optimized helper for counting set bits
 // Process 4 blocks (32 bytes = 256 bits) at a time using _mm256_popcnt_epi64
 // Returns the total count of set bits in the first num_blocks blocks
-#pragma GCC push_options
-#pragma GCC target("avx2,avx512vpopcntdq")
 inline std::uint64_t simd_count_blocks(const std::uint64_t* data,
                                        std::size_t num_blocks) {
   __m256i vec_count = _mm256_setzero_si256();
@@ -40,7 +38,6 @@ inline std::uint64_t simd_count_blocks(const std::uint64_t* data,
 
   return result;
 }
-#pragma GCC pop_options
 } // namespace detail
 
 template <typename Policy> class dynamic_bitset {
@@ -153,8 +150,15 @@ public:
     return (blocks_[block_index(pos)] & bit_mask(pos)) != 0;
   }
 
-  constexpr bool operator[](size_type pos) const noexcept {
+  // Unchecked access - no bounds checking, reads indeterminate padding bits if
+  // OOB Use when you've already validated bounds or need maximum performance
+  constexpr bool test_unchecked(size_type pos) const noexcept {
     return (blocks_[block_index(pos)] & bit_mask(pos)) != 0;
+  }
+
+  // operator[] is an alias for test_unchecked() for convenience
+  constexpr bool operator[](size_type pos) const noexcept {
+    return test_unchecked(pos);
   }
 
   constexpr dynamic_bitset& set(size_type pos, bool value = true) {
