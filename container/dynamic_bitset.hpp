@@ -2,8 +2,10 @@
 #define FRANKLIN_CONTAINER_DYNAMIC_BITSET_HPP
 
 #include "core/error_collector.hpp"
+#include "memory/aligned_allocator.hpp"
 #include <cstdint>
 #include <cstring>
+#include <immintrin.h>
 #include <vector>
 
 namespace franklin {
@@ -12,12 +14,13 @@ template <typename Policy> class dynamic_bitset {
 public:
   using block_type = std::uint64_t;
   using size_type = typename Policy::size_type;
+  using allocator_type = memory::aligned_allocator<block_type, 64>;
 
   static constexpr size_type bits_per_block = 64;
   static constexpr size_type block_shift = 6; // log2(64) = 6
 
 private:
-  std::vector<block_type> blocks_;
+  std::vector<block_type, allocator_type> blocks_;
   size_type num_bits_;
 
   // OPTIMIZATION 1: Replace division with bit shift (pos / 64 => pos >> 6)
@@ -105,7 +108,7 @@ public:
 
   constexpr bool test(size_type pos) const {
     // OPTIMIZATION 6: Branch prediction hint - bounds check rarely fails
-    if (__builtin_expect(pos >= num_bits_, 0)) {
+    if (pos >= num_bits_) [[unlikely]] {
       auto error =
           core::make_error(core::ErrorCode::OutOfRange, "dynamic_bitset",
                            "test", "Position exceeds bitset size");
@@ -123,7 +126,7 @@ public:
 
   constexpr dynamic_bitset& set(size_type pos, bool value = true) {
     // OPTIMIZATION 7: Branch prediction hint - bounds check rarely fails
-    if (__builtin_expect(pos >= num_bits_, 0)) {
+    if (pos >= num_bits_) [[unlikely]] {
       auto error =
           core::make_error(core::ErrorCode::OutOfRange, "dynamic_bitset", "set",
                            "Position exceeds bitset size");
@@ -135,7 +138,7 @@ public:
     }
 
     // OPTIMIZATION 8: Branch prediction hint - setting to true is common
-    if (__builtin_expect(value, 1)) {
+    if (value) [[likely]] {
       blocks_[block_index(pos)] |= bit_mask(pos);
     } else {
       blocks_[block_index(pos)] &= ~bit_mask(pos);
@@ -164,7 +167,7 @@ public:
 
   constexpr dynamic_bitset& flip(size_type pos) {
     // OPTIMIZATION 10: Branch prediction hint - bounds check rarely fails
-    if (__builtin_expect(pos >= num_bits_, 0)) {
+    if (pos >= num_bits_) [[unlikely]] {
       auto error =
           core::make_error(core::ErrorCode::OutOfRange, "dynamic_bitset",
                            "flip", "Position exceeds bitset size");
@@ -193,40 +196,113 @@ public:
     return result;
   }
 
-  constexpr bool all() const noexcept {
-    // OPTIMIZATION 11: Early exit and bit manipulation instead of modulo
-    if (__builtin_expect(empty(), 0))
+  /// AVX2-optimized any() - checks if any bit is set
+  /// Processes 64 bytes (1 cache line) per iteration using 2x 32-byte loads
+  /// Optimized for high-density bitsets with occasional sparsity
+  bool any() const noexcept {
+    if (blocks_.empty()) {
+      return false;
+    }
+
+    const block_type* data = blocks_.data();
+    const size_type num_blocks_total = blocks_.size();
+
+    // Process 8 blocks (64 bytes = 1 cache line) at a time using AVX2
+    // Each ymm register holds 4 x uint64_t = 32 bytes
+    const size_type simd_blocks = num_blocks_total / 8;
+    size_type i = 0;
+
+    // OR together all 64 bytes of each cache line
+    for (size_type chunk = 0; chunk < simd_blocks; ++chunk) {
+      // Load 2x 32-byte chunks (1 full cache line)
+      __m256i ymm0 = _mm256_load_si256(
+          reinterpret_cast<const __m256i*>(data + i));       // blocks 0-3
+      __m256i ymm1 = _mm256_load_si256(
+          reinterpret_cast<const __m256i*>(data + i + 4));   // blocks 4-7
+
+      // OR the two 32-byte chunks together
+      __m256i combined = _mm256_or_si256(ymm0, ymm1);
+
+      // Check if any bits are set in the combined result
+      if (!_mm256_testz_si256(combined, combined)) {
+        return true; // Early exit: found a set bit
+      }
+
+      i += 8;
+    }
+
+    // Handle remaining blocks with scalar code
+    for (; i < num_blocks_total; ++i) {
+      if (data[i] != 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool none() const noexcept { return !any(); }
+
+  /// AVX2-optimized all() - checks if all bits are set
+  /// Processes 64 bytes (1 cache line) per iteration using 2x 32-byte loads
+  /// Optimized for high-density bitsets with occasional sparsity
+  bool all() const noexcept {
+    if (empty()) [[unlikely]] {
       return true;
+    }
 
-    const size_type num_full_blocks = blocks_.size() - 1;
+    const block_type* data = blocks_.data();
+    const size_type num_blocks_total = blocks_.size();
 
-    // Check all full blocks
-    for (size_type i = 0; i < num_full_blocks; ++i) {
-      if (__builtin_expect(blocks_[i] != ~block_type(0), 0)) {
+    // Special handling for last block with partial bits
+    const size_type num_full_blocks = num_blocks_total - 1;
+    const size_type remainder = num_bits_ & (bits_per_block - 1);
+
+    // Process full blocks in chunks of 8 (64 bytes = 1 cache line)
+    const size_type simd_blocks = num_full_blocks / 8;
+    size_type i = 0;
+
+    // All-ones pattern for comparison
+    const __m256i all_ones = _mm256_set1_epi64x(-1LL);
+
+    for (size_type chunk = 0; chunk < simd_blocks; ++chunk) {
+      // Load 2x 32-byte chunks (1 full cache line)
+      __m256i ymm0 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(data + i));
+      __m256i ymm1 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(data + i + 4));
+
+      // Check if both chunks are all-ones
+      // cmpeq returns all-ones (0xFF...FF) if equal, all-zeros otherwise
+      __m256i cmp0 = _mm256_cmpeq_epi64(ymm0, all_ones);
+      __m256i cmp1 = _mm256_cmpeq_epi64(ymm1, all_ones);
+
+      // AND the comparison results
+      __m256i combined = _mm256_and_si256(cmp0, cmp1);
+
+      // If not all bits are set, we found a zero bit
+      if (!_mm256_testc_si256(combined, all_ones)) {
+        return false; // Early exit: found a zero bit
+      }
+
+      i += 8;
+    }
+
+    // Handle remaining full blocks with scalar code
+    for (; i < num_full_blocks; ++i) {
+      if (data[i] != ~block_type(0)) {
         return false;
       }
     }
 
-    // Check last block with bit mask instead of modulo
-    const size_type remainder = num_bits_ & (bits_per_block - 1);
+    // Check last block with mask
     if (remainder == 0) {
-      return blocks_.back() == ~block_type(0);
+      return data[num_blocks_total - 1] == ~block_type(0);
     } else {
       block_type mask = (block_type(1) << remainder) - 1;
-      return (blocks_.back() & mask) == mask;
+      return (data[num_blocks_total - 1] & mask) == mask;
     }
   }
-
-  constexpr bool any() const noexcept {
-    for (const auto& block : blocks_) {
-      if (block != 0) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  constexpr bool none() const noexcept { return !any(); }
 
   constexpr dynamic_bitset& operator&=(const dynamic_bitset& other) noexcept {
     // OPTIMIZATION 12: Use pointer iteration for better codegen
