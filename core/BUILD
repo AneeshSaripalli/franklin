@@ -14,7 +14,10 @@ cc_test(
     name = "bf16_test",
     size = "small",
     srcs = ["bf16_test.cpp"],
-    copts = ["-std=c++20"],
+    copts = [
+        "-std=c++20",
+        "-march=native",
+    ],
     deps = [
         ":core",
         "@googletest//:gtest_main",
