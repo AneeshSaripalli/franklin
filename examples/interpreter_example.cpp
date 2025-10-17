@@ -1,33 +1,19 @@
-#include "container/interpreter.hpp"
+#include "core/interpreter.hpp"
 #include <iostream>
-
-namespace franklin {
-
-// Define a simple policy for testing
-struct ExamplePolicy {
-  using value_type = int;
-  using allocator_type = std::allocator<int>;
-  static constexpr bool is_view = false;
-  static constexpr bool allow_missing = false;
-  static constexpr bool use_avx512 = false;
-  static constexpr bool assume_aligned = false;
-};
-
-} // namespace franklin
 
 int main() {
   using namespace franklin;
 
-  // Create an interpreter
-  interpreter<ExamplePolicy> interp;
+  // Create an interpreter (non-templated, supports heterogeneous types)
+  interpreter interp;
 
-  // Create some column vectors
-  column_vector<ExamplePolicy> col1(5, 10); // 5 elements, all set to 10
-  column_vector<ExamplePolicy> col2(5, 20); // 5 elements, all set to 20
+  // Create some column vectors using default policies
+  column_vector<Int32DefaultPolicy> col1(5, 10); // 5 elements, all set to 10
+  column_vector<Int32DefaultPolicy> col2(5, 20); // 5 elements, all set to 20
 
-  // Register them with names
-  interp.register_column("a", col1);
-  interp.register_column("b", col2);
+  // Register them with names (takes ownership via move)
+  interp.register_column("a", std::move(col1));
+  interp.register_column("b", std::move(col2));
 
   std::cout << "Registered columns 'a' and 'b'\n";
   std::cout << "Number of registered columns: " << interp.size() << "\n";
