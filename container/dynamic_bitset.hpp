@@ -189,10 +189,29 @@ public:
   }
 
   constexpr size_type count() const noexcept {
-    size_type result = 0;
-    for (const auto& block : blocks_) {
-      result += __builtin_popcountll(block);
+    if (num_bits_ == 0) {
+      return 0;
     }
+
+    size_type result = 0;
+    const size_type last_block_idx = block_index(num_bits_ - 1);
+    const size_type remainder = num_bits_ & (bits_per_block - 1);
+
+    // Count full blocks (all blocks before the last)
+    for (size_type i = 0; i < last_block_idx; ++i) {
+      result += __builtin_popcountll(blocks_[i]);
+    }
+
+    // Count the last block containing actual data
+    if (remainder == 0) {
+      // Last block is full (num_bits_ is multiple of 64)
+      result += __builtin_popcountll(blocks_[last_block_idx]);
+    } else {
+      // Last block is partial, mask off bits beyond num_bits_
+      block_type mask = (block_type(1) << remainder) - 1;
+      result += __builtin_popcountll(blocks_[last_block_idx] & mask);
+    }
+
     return result;
   }
 
@@ -216,9 +235,9 @@ public:
     for (size_type chunk = 0; chunk < simd_blocks; ++chunk) {
       // Load 2x 32-byte chunks (1 full cache line)
       __m256i ymm0 = _mm256_load_si256(
-          reinterpret_cast<const __m256i*>(data + i));       // blocks 0-3
+          reinterpret_cast<const __m256i*>(data + i)); // blocks 0-3
       __m256i ymm1 = _mm256_load_si256(
-          reinterpret_cast<const __m256i*>(data + i + 4));   // blocks 4-7
+          reinterpret_cast<const __m256i*>(data + i + 4)); // blocks 4-7
 
       // OR the two 32-byte chunks together
       __m256i combined = _mm256_or_si256(ymm0, ymm1);
@@ -252,14 +271,11 @@ public:
     }
 
     const block_type* data = blocks_.data();
-    const size_type num_blocks_total = blocks_.size();
-
-    // Special handling for last block with partial bits
-    const size_type num_full_blocks = num_blocks_total - 1;
+    const size_type last_block_idx = block_index(num_bits_ - 1);
     const size_type remainder = num_bits_ & (bits_per_block - 1);
 
     // Process full blocks in chunks of 8 (64 bytes = 1 cache line)
-    const size_type simd_blocks = num_full_blocks / 8;
+    const size_type simd_blocks = last_block_idx / 8;
     size_type i = 0;
 
     // All-ones pattern for comparison
@@ -288,35 +304,53 @@ public:
       i += 8;
     }
 
-    // Handle remaining full blocks with scalar code
-    for (; i < num_full_blocks; ++i) {
+    // Handle remaining full blocks with scalar code (blocks before last)
+    for (; i < last_block_idx; ++i) {
       if (data[i] != ~block_type(0)) {
         return false;
       }
     }
 
-    // Check last block with mask
+    // Check the last block containing actual data
     if (remainder == 0) {
-      return data[num_blocks_total - 1] == ~block_type(0);
+      // Last block is full (num_bits_ is multiple of 64)
+      return data[last_block_idx] == ~block_type(0);
     } else {
+      // Last block is partial, mask off bits beyond num_bits_
       block_type mask = (block_type(1) << remainder) - 1;
-      return (data[num_blocks_total - 1] & mask) == mask;
+      return (data[last_block_idx] & mask) == mask;
     }
   }
 
-  constexpr dynamic_bitset& operator&=(const dynamic_bitset& other) noexcept {
-    // OPTIMIZATION 12: Use pointer iteration for better codegen
+  dynamic_bitset& operator&=(const dynamic_bitset& other) noexcept {
+    // AVX2-optimized bitwise AND - process full cache lines (64 bytes = 8
+    // blocks) No tail handling needed: num_blocks_needed() always rounds to
+    // cache line boundaries
     const size_type min_blocks = std::min(blocks_.size(), other.blocks_.size());
 
     block_type* __restrict__ dst = blocks_.data();
     const block_type* __restrict__ src = other.blocks_.data();
 
-    // AND the overlapping portion
-    for (size_type i = 0; i < min_blocks; ++i) {
-      dst[i] &= src[i];
+    // Process 8 x uint64_t (64 bytes = 1 cache line) per iteration
+    // min_blocks is always a multiple of 8, so no tail handling needed
+    for (size_type i = 0; i < min_blocks; i += 8) {
+      // First half of cache line (32 bytes = 4 blocks)
+      __m256i dst_vec0 = _mm256_load_si256(reinterpret_cast<__m256i*>(dst + i));
+      __m256i src_vec0 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(src + i));
+      __m256i result0 = _mm256_and_si256(dst_vec0, src_vec0);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(dst + i), result0);
+
+      // Second half of cache line (32 bytes = 4 blocks)
+      __m256i dst_vec1 =
+          _mm256_load_si256(reinterpret_cast<__m256i*>(dst + i + 4));
+      __m256i src_vec1 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(src + i + 4));
+      __m256i result1 = _mm256_and_si256(dst_vec1, src_vec1);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(dst + i + 4), result1);
     }
 
-    // Fix Bug #4: Clear all blocks beyond RHS size (AND with 0) using memset
+    // Clear all blocks beyond RHS size (AND with 0)
     const size_type remaining_blocks = blocks_.size() - min_blocks;
     if (remaining_blocks > 0) {
       std::memset(dst + min_blocks, 0, remaining_blocks * sizeof(block_type));
@@ -324,33 +358,67 @@ public:
     return *this;
   }
 
-  constexpr dynamic_bitset& operator|=(const dynamic_bitset& other) noexcept {
-    // OPTIMIZATION 13: Use pointer iteration for better codegen
+  dynamic_bitset& operator|=(const dynamic_bitset& other) noexcept {
+    // AVX2-optimized bitwise OR - process full cache lines (64 bytes = 8
+    // blocks) No tail handling needed: num_blocks_needed() always rounds to
+    // cache line boundaries
     const size_type min_blocks = std::min(blocks_.size(), other.blocks_.size());
 
     block_type* __restrict__ dst = blocks_.data();
     const block_type* __restrict__ src = other.blocks_.data();
 
-    for (size_type i = 0; i < min_blocks; ++i) {
-      dst[i] |= src[i];
+    // Process 8 x uint64_t (64 bytes = 1 cache line) per iteration
+    // min_blocks is always a multiple of 8, so no tail handling needed
+    for (size_type i = 0; i < min_blocks; i += 8) {
+      // First half of cache line
+      __m256i dst_vec0 = _mm256_load_si256(reinterpret_cast<__m256i*>(dst + i));
+      __m256i src_vec0 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(src + i));
+      __m256i result0 = _mm256_or_si256(dst_vec0, src_vec0);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(dst + i), result0);
+
+      // Second half of cache line
+      __m256i dst_vec1 =
+          _mm256_load_si256(reinterpret_cast<__m256i*>(dst + i + 4));
+      __m256i src_vec1 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(src + i + 4));
+      __m256i result1 = _mm256_or_si256(dst_vec1, src_vec1);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(dst + i + 4), result1);
     }
-    // Fix Bug #4: Blocks beyond RHS size remain unchanged (OR with 0 is
-    // identity)
+
+    // Blocks beyond RHS size remain unchanged (OR with 0 is identity)
     return *this;
   }
 
-  constexpr dynamic_bitset& operator^=(const dynamic_bitset& other) noexcept {
-    // OPTIMIZATION 14: Use pointer iteration for better codegen
+  dynamic_bitset& operator^=(const dynamic_bitset& other) noexcept {
+    // AVX2-optimized bitwise XOR - process full cache lines (64 bytes = 8
+    // blocks) No tail handling needed: num_blocks_needed() always rounds to
+    // cache line boundaries
     const size_type min_blocks = std::min(blocks_.size(), other.blocks_.size());
 
     block_type* __restrict__ dst = blocks_.data();
     const block_type* __restrict__ src = other.blocks_.data();
 
-    for (size_type i = 0; i < min_blocks; ++i) {
-      dst[i] ^= src[i];
+    // Process 8 x uint64_t (64 bytes = 1 cache line) per iteration
+    // min_blocks is always a multiple of 8, so no tail handling needed
+    for (size_type i = 0; i < min_blocks; i += 8) {
+      // First half of cache line
+      __m256i dst_vec0 = _mm256_load_si256(reinterpret_cast<__m256i*>(dst + i));
+      __m256i src_vec0 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(src + i));
+      __m256i result0 = _mm256_xor_si256(dst_vec0, src_vec0);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(dst + i), result0);
+
+      // Second half of cache line
+      __m256i dst_vec1 =
+          _mm256_load_si256(reinterpret_cast<__m256i*>(dst + i + 4));
+      __m256i src_vec1 =
+          _mm256_load_si256(reinterpret_cast<const __m256i*>(src + i + 4));
+      __m256i result1 = _mm256_xor_si256(dst_vec1, src_vec1);
+      _mm256_store_si256(reinterpret_cast<__m256i*>(dst + i + 4), result1);
     }
-    // Fix Bug #4: Blocks beyond RHS size remain unchanged (XOR with 0 is
-    // identity)
+
+    // Blocks beyond RHS size remain unchanged (XOR with 0 is identity)
     return *this;
   }
 
@@ -362,8 +430,13 @@ public:
 
 private:
   // OPTIMIZATION 15: Replace division with bit shift
+  // Always round up to cache line boundaries (8 blocks = 64 bytes)
+  // This ensures we can always process full cache lines with AVX2 without tail
+  // handling
   static constexpr size_type num_blocks_needed(size_type num_bits) noexcept {
-    return (num_bits + bits_per_block - 1) >> block_shift;
+    size_type blocks = (num_bits + bits_per_block - 1) >> block_shift;
+    // Round up to nearest multiple of 8 blocks (64-byte cache line)
+    return (blocks + 7) & ~size_type(7);
   }
 };
 

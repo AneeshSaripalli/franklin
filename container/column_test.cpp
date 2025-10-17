@@ -877,14 +877,14 @@ TEST(ColumnOperationsTest, Int32BitmaskIntersection) {
   }
 
   // Mark some values as missing in a
-  a.present_mask()[2] = false;
-  a.present_mask()[5] = false;
-  a.present_mask()[8] = false;
+  a.present_mask().set(2, false);
+  a.present_mask().set(5, false);
+  a.present_mask().set(8, false);
 
   // Mark some values as missing in b (some overlap, some don't)
-  b.present_mask()[5] = false; // Overlaps with a
-  b.present_mask()[7] = false;
-  b.present_mask()[11] = false;
+  b.present_mask().set(5, false); // Overlaps with a
+  b.present_mask().set(7, false);
+  b.present_mask().set(11, false);
 
   auto result = a + b;
 
@@ -916,10 +916,10 @@ TEST(ColumnOperationsTest, Float32BitmaskIntersection) {
   }
 
   // Mark some values as missing
-  a.present_mask()[3] = false;
-  a.present_mask()[6] = false;
-  b.present_mask()[6] = false; // Overlaps
-  b.present_mask()[9] = false;
+  a.present_mask().set(3, false);
+  a.present_mask().set(6, false);
+  b.present_mask().set(6, false); // Overlaps
+  b.present_mask().set(9, false);
 
   auto result = a * b;
 
@@ -948,10 +948,10 @@ TEST(ColumnOperationsTest, BF16BitmaskIntersection) {
   }
 
   // Mark some values as missing
-  a.present_mask()[1] = false;
-  a.present_mask()[4] = false;
-  b.present_mask()[4] = false; // Overlaps
-  b.present_mask()[10] = false;
+  a.present_mask().set(1, false);
+  a.present_mask().set(4, false);
+  b.present_mask().set(4, false); // Overlaps
+  b.present_mask().set(10, false);
 
   auto result = a - b;
 
@@ -1267,9 +1267,9 @@ TEST(ScalarOperationsTest, Int32ScalarPreservesBitmask) {
   }
 
   // Mark some as missing
-  a.present_mask()[2] = false;
-  a.present_mask()[7] = false;
-  a.present_mask()[11] = false;
+  a.present_mask().set(2, false);
+  a.present_mask().set(7, false);
+  a.present_mask().set(11, false);
 
   auto result = a * 5;
 
@@ -1294,8 +1294,8 @@ TEST(ScalarOperationsTest, Float32ScalarPreservesBitmask) {
   }
 
   // Mark some as missing
-  a.present_mask()[4] = false;
-  a.present_mask()[9] = false;
+  a.present_mask().set(4, false);
+  a.present_mask().set(9, false);
 
   auto result = a + 10.0f;
 

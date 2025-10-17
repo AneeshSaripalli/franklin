@@ -38,6 +38,11 @@ concept PipelinePolicy = requires {
 
 } // namespace concepts
 
+// Policy for dynamic_bitset
+struct BitsetPolicy {
+  using size_type = std::size_t;
+};
+
 // Standard policy definitions - using cache-line aligned allocator
 struct Int32DefaultPolicy {
   using value_type = std::int32_t;
@@ -73,8 +78,6 @@ template <concepts::ColumnPolicy Policy> class column_vector {
 public:
   using value_type = typename Policy::value_type;
   using allocator_type = typename Policy::allocator_type;
-  using bool_allocator_type = typename std::allocator_traits<
-      allocator_type>::template rebind_alloc<bool>;
 
   static constexpr bool is_view = Policy::is_view;
   static constexpr bool allow_missing = Policy::allow_missing;
@@ -87,7 +90,7 @@ private:
   // that we can use. E.g. pointers are a notable example.
   // Also stores the size of the data twice, which is dumb. 8 bytes per column!.
   std::vector<value_type, allocator_type> data_;
-  std::vector<bool, bool_allocator_type> present_;
+  dynamic_bitset<BitsetPolicy> present_mask_;
 
 public:
   // Default constructor with optional allocator
@@ -165,18 +168,18 @@ public:
   std::vector<value_type, allocator_type>& data() noexcept { return data_; }
 
   // Public accessors for present bitmask (needed for vectorization)
-  const std::vector<bool, bool_allocator_type>& present_mask() const noexcept {
-    return present_;
+  const dynamic_bitset<BitsetPolicy>& present_mask() const noexcept {
+    return present_mask_;
   }
-  std::vector<bool, bool_allocator_type>& present_mask() noexcept {
-    return present_;
+  dynamic_bitset<BitsetPolicy>& present_mask() noexcept {
+    return present_mask_;
   }
 };
 
 // Default constructor with optional allocator
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>::column_vector(const allocator_type& alloc)
-    : allocator_(alloc), data_(alloc), present_(alloc) {}
+    : allocator_(alloc), data_(alloc), present_mask_() {}
 
 // Constructor with size and allocator
 template <concepts::ColumnPolicy Policy>
@@ -191,11 +194,10 @@ column_vector<Policy>::column_vector(std::size_t size,
       elements_per_cache_line;
 
   data_ = std::vector<value_type, allocator_type>(rounded_size, alloc);
-  present_ = std::vector<bool, bool_allocator_type>(rounded_size, true,
-                                                    bool_allocator_type(alloc));
+  present_mask_ = dynamic_bitset<BitsetPolicy>(rounded_size, true);
   // Mark only the requested elements as present
   for (std::size_t i = size; i < rounded_size; ++i) {
-    present_[i] = false;
+    present_mask_.set(i, false);
   }
 }
 
@@ -212,11 +214,10 @@ column_vector<Policy>::column_vector(std::size_t size, const value_type& value,
       elements_per_cache_line;
 
   data_ = std::vector<value_type, allocator_type>(rounded_size, value, alloc);
-  present_ = std::vector<bool, bool_allocator_type>(rounded_size, true,
-                                                    bool_allocator_type(alloc));
+  present_mask_ = dynamic_bitset<BitsetPolicy>(rounded_size, true);
   // Mark only the requested elements as present
   for (std::size_t i = size; i < rounded_size; ++i) {
-    present_[i] = false;
+    present_mask_.set(i, false);
   }
 }
 
@@ -225,13 +226,13 @@ template <concepts::ColumnPolicy Policy>
 column_vector<Policy>::column_vector(const column_vector& other,
                                      const allocator_type& alloc)
     : allocator_(alloc), data_(other.data_, alloc),
-      present_(other.present_, alloc) {}
+      present_mask_(other.present_mask_) {}
 
 // Move constructor
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>::column_vector(column_vector&& other) noexcept
     : allocator_(std::move(other.allocator_)), data_(std::move(other.data_)),
-      present_(std::move(other.present_)) {}
+      present_mask_(std::move(other.present_mask_)) {}
 
 // Copy assignment
 template <concepts::ColumnPolicy Policy>
@@ -239,7 +240,7 @@ column_vector<Policy>&
 column_vector<Policy>::operator=(const column_vector& other) noexcept {
   if (this != &other) {
     data_ = other.data_;
-    present_ = other.present_;
+    present_mask_ = other.present_mask_;
     // Note: allocator is not copied per C++ allocator semantics
   }
   return *this;
@@ -251,7 +252,7 @@ column_vector<Policy>&
 column_vector<Policy>::operator=(column_vector&& other) noexcept {
   if (this != &other) {
     data_ = std::move(other.data_);
-    present_ = std::move(other.present_);
+    present_mask_ = std::move(other.present_mask_);
     allocator_ = std::move(other.allocator_);
   }
   return *this;
@@ -498,6 +499,14 @@ template <OpType Op> struct BF16ScalarPipeline {
   }
 };
 
+// AVX2-optimized bitset AND: dst &= src
+// Note: dynamic_bitset's operator&= uses AVX2 instructions internally
+// via its optimized block-level operations (see dynamic_bitset.hpp:307-325)
+inline void bitset_and_avx2(dynamic_bitset<BitsetPolicy>& dst,
+                            const dynamic_bitset<BitsetPolicy>& src) {
+  dst &= src;
+}
+
 // Vectorized scalar operation: column op scalar
 template <concepts::ColumnPolicy ColPolicy, typename ScalarPipeline>
 static void vectorize_scalar(column_vector<ColPolicy> const& input,
@@ -540,13 +549,11 @@ static void vectorize_scalar(column_vector<ColPolicy> const& input,
     // Store result
     ScalarPipeline::store(output_ptr + offset, result_storage);
 
-    // Preserve bitmask (scalar is always "present", so just copy input mask)
-    for (std::size_t i = offset; i < offset + step; ++i) {
-      output.present_mask()[i] = input.present_mask()[i];
-    }
-
     offset += step;
   }
+
+  // Copy bitmask ONCE after the loop (scalar is always "present")
+  output.present_mask() = input.present_mask();
 }
 
 template <concepts::ColumnPolicy ColPolicy, concepts::PipelinePolicy Pipeline>
@@ -581,17 +588,16 @@ static void vectorize(column_vector<ColPolicy> const& fst,
     // Store to memory
     Pipeline::store(out_ptr + offset, result_storage);
 
-    // Compute bitmask intersection: only set if both streams have that index
-    // set
-    for (std::size_t i = offset; i < offset + step; ++i) {
-      out.present_mask()[i] = fst.present_mask()[i] && snd.present_mask()[i];
-    }
-
     offset += step;
   }
 
+  // Compute bitmask intersection ONCE after the loop using AVX2-optimized
+  // bitset AND
+  out.present_mask() = fst.present_mask();
+  bitset_and_avx2(out.present_mask(), snd.present_mask());
+
   // Note: No tail handling needed - buffers are cache-line aligned by design.
-  // The present_ bitmask handles validity of elements within the padded buffer.
+  // The present_mask_ handles validity of elements within the padded buffer.
 }
 
 template <concepts::ColumnPolicy ColPolicy, concepts::PipelinePolicy Pipeline>
@@ -625,17 +631,15 @@ static void vectorize_destructive(column_vector<ColPolicy>& mut,
     // Store back to mut (reusing its buffer)
     Pipeline::store(mut_ptr + offset, result_storage);
 
-    // Compute bitmask intersection: only set if both streams have that index
-    // set
-    for (std::size_t i = offset; i < offset + step; ++i) {
-      mut.present_mask()[i] = mut.present_mask()[i] && snd.present_mask()[i];
-    }
-
     offset += step;
   }
 
+  // Compute bitmask intersection ONCE after the loop using AVX2-optimized
+  // bitset AND
+  bitset_and_avx2(mut.present_mask(), snd.present_mask());
+
   // Note: No tail handling needed - buffers are cache-line aligned by design.
-  // The present_ bitmask handles validity of elements within the padded buffer.
+  // The present_mask_ handles validity of elements within the padded buffer.
 }
 
 // Element-wise addition
@@ -894,12 +898,11 @@ column_vector<Policy> operator-(typename Policy::value_type scalar,
       _mm256_store_si256(reinterpret_cast<__m256i*>(result_ptr + offset),
                          result_reg);
 
-      // Copy bitmask
-      for (std::size_t i = offset; i < offset + step; ++i) {
-        result.present_mask()[i] = col.present_mask()[i];
-      }
       offset += step;
     }
+
+    // Copy bitmask ONCE after the loop
+    result.present_mask() = col.present_mask();
     return result;
   } else if constexpr (std::is_same_v<value_type, float>) {
     column_vector<Policy> result(col.data().size(), col.allocator_);
@@ -917,12 +920,11 @@ column_vector<Policy> operator-(typename Policy::value_type scalar,
       auto result_reg = _mm256_sub_ps(scalar_reg, col_reg);
       _mm256_store_ps(result_ptr + offset, result_reg);
 
-      // Copy bitmask
-      for (std::size_t i = offset; i < offset + step; ++i) {
-        result.present_mask()[i] = col.present_mask()[i];
-      }
       offset += step;
     }
+
+    // Copy bitmask ONCE after the loop
+    result.present_mask() = col.present_mask();
     return result;
   } else if constexpr (std::is_same_v<value_type, bf16>) {
     column_vector<Policy> result(col.data().size(), col.allocator_);
@@ -945,12 +947,11 @@ column_vector<Policy> operator-(typename Policy::value_type scalar,
       _mm_store_si128(reinterpret_cast<__m128i*>(result_ptr + offset),
                       reinterpret_cast<__m128i>(result_bf16));
 
-      // Copy bitmask
-      for (std::size_t i = offset; i < offset + step; ++i) {
-        result.present_mask()[i] = col.present_mask()[i];
-      }
       offset += step;
     }
+
+    // Copy bitmask ONCE after the loop
+    result.present_mask() = col.present_mask();
     return result;
   } else {
     static_assert(!std::is_same_v<int, int>);
@@ -959,18 +960,18 @@ column_vector<Policy> operator-(typename Policy::value_type scalar,
 
 template <concepts::ColumnPolicy Policy>
 bool column_vector<Policy>::present(std::size_t index) const noexcept {
-  if (index >= present_.size()) [[unlikely]] {
+  if (index >= present_mask_.size()) [[unlikely]] {
     return false;
   }
-  return present_[index];
+  return present_mask_[index];
 }
 
 template <concepts::ColumnPolicy Policy>
 bool column_vector<Policy>::present_unchecked(
     std::size_t index) const noexcept {
-  FRANKLIN_DEBUG_ASSERT(index < present_.size() &&
+  FRANKLIN_DEBUG_ASSERT(index < present_mask_.size() &&
                         "present() index out of bounds");
-  return present_[index];
+  return present_mask_[index];
 }
 
 } // namespace franklin
