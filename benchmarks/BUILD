@@ -22,18 +22,21 @@ cc_test(
     tags = ["benchmark", "performance"],
 )
 
+
 cc_test(
-    name = "dynamic_bitset_optimized_benchmark",
-    srcs = ["dynamic_bitset_optimized_benchmark.cpp"],
+    name = "bitset_density_benchmark",
+    srcs = ["bitset_density_benchmark.cpp"],
     copts = [
         "-std=c++20",
         "-O3",
         "-march=native",
+        "-mavx2",
         "-DNDEBUG",
     ],
     deps = [
-        "//container:container_optimized",
+        "//container",
+        "//memory",
         "@com_github_google_benchmark//:benchmark",
     ],
-    tags = ["benchmark", "performance"],
+    tags = ["benchmark", "performance", "avx2", "density"],
 )
