@@ -1,4 +1,5 @@
 #include "container/dynamic_bitset.hpp"
+#include "core/bf16.hpp"
 #include "core/compiler_macros.hpp"
 #include <concepts>
 #include <cstdint>
@@ -18,6 +19,14 @@ concept ColumnPolicy = requires {
   requires std::is_same_v<decltype(T::allow_missing), const bool>;
   requires std::is_same_v<decltype(T::use_avx512), const bool>;
   requires std::is_same_v<decltype(T::assume_aligned), const bool>;
+};
+
+template <typename T>
+concept PipelinePolicy = requires {
+  typename T::value_type;
+  typename T::storage_register_type;
+  typename T::compute_register_type;
+  { T::elements_per_iteration } -> std::convertible_to<std::size_t>;
 };
 
 } // namespace concepts
@@ -69,13 +78,17 @@ public:
 
   // Element-wise operations
   column_vector operator+(const column_vector& other) const;
+  column_vector operator+(column_vector&& other) const;
 
   // Check if value at index is present (not missing/null)
-  // Performs bounds checking in debug builds
+  // Always performs bounds checking (returns false if out of bounds)
+  // Safe for production use
   bool present(std::size_t index) const noexcept;
 
-  // Unchecked version - no bounds checking, faster
-  // Precondition: index < size()
+  // Unchecked version - only validates bounds in DEBUG builds
+  // In optimized/production builds, no bounds checking is performed
+  // Precondition: index < present_.size()
+  // Use this in hot paths where you've already validated the index
   bool present_unchecked(std::size_t index) const noexcept;
 };
 
@@ -134,83 +147,147 @@ column_vector<Policy>::operator=(column_vector&& other) noexcept {
   return *this;
 }
 
-template <concepts::ColumnPolicy Policy, typename SIMDLoad, typename SIMDStore,
-          typename SIMDOp, typename Allocator>
-static void vectorize(column_vector<Policy> const& fst,
-                      column_vector<Policy> const& snd,
-                      column_vector<Policy>& out) {
+// Default pipeline for int32_t - no transformation needed
+struct Int32Pipeline {
+  using value_type = std::int32_t;
+  using storage_register_type = __m256i;
+  using compute_register_type = __m256i;
+  static constexpr std::size_t elements_per_iteration = 8;
 
-  using register_type = __m256i;
-
-  register_type* data_pointer =
-      std::bit_cast<const register_type>(fst.data_.data());
-  register_type* other_pointer =
-      std::bit_cast<const register_type>(snd.data_.data());
-  register_type* store_pointer =
-      std::bit_cast<const register_type>(out.data_.data());
-
-  static constexpr auto simd_load = _mm256_load_si256;
-  static constexpr auto simd_op = _mm256_add_epi32;
-  static constexpr auto simd_store = _mm256_store_si256;
-
-  auto offset = 0UL;
-
-  while (true) {
-    auto a1 = simd_load(data_pointer + offset);
-    auto a2 = simd_load(other_pointer + offset);
-
-    auto b1 = simd_load(data_pointer + offset + 1);
-    auto b2 = simd_load(other_pointer + offset + 1);
-
-    auto c1 = simd_op(a1, b1);
-    auto c2 = simd_op(a2, b2);
-
-    // Store back to new array
-    simd_store(store_pointer + offset, c1);
-    simd_store(store_pointer + offset + 1, c2);
-
-    if (offset >= out.data_.size()) {
-      break;
-    }
+  FRANKLIN_FORCE_INLINE static storage_register_type load(const value_type* ptr) {
+    return _mm256_load_si256(reinterpret_cast<const __m256i*>(ptr));
   }
+
+  FRANKLIN_FORCE_INLINE static compute_register_type transform_to(storage_register_type reg) {
+    return reg; // no-op for primitives
+  }
+
+  FRANKLIN_FORCE_INLINE static compute_register_type op(compute_register_type a,
+                                         compute_register_type b) {
+    return _mm256_add_epi32(a, b);
+  }
+
+  FRANKLIN_FORCE_INLINE static storage_register_type
+  transform_from(compute_register_type reg) {
+    return reg; // no-op for primitives
+  }
+
+  FRANKLIN_FORCE_INLINE static void store(value_type* ptr, storage_register_type reg) {
+    _mm256_store_si256(reinterpret_cast<__m256i*>(ptr), reg);
+  }
+};
+
+// BF16 pipeline - converts to fp32 for computation using native instructions
+struct BF16Pipeline {
+  using value_type = bf16;
+  using storage_register_type = __m128i; // 8 bf16 values = 16 bytes
+  using compute_register_type = __m256;  // 8 fp32 values = 32 bytes
+  static constexpr std::size_t elements_per_iteration = 8;
+
+  FRANKLIN_FORCE_INLINE static storage_register_type load(const value_type* ptr) {
+    return _mm_load_si128(reinterpret_cast<const __m128i*>(ptr));
+  }
+
+  // Convert 8 bf16 to 8 fp32 using native AVX-512 BF16 instruction
+  FRANKLIN_FORCE_INLINE static compute_register_type
+  transform_to(storage_register_type bf16_reg) {
+    // _mm256_cvtpbh_ps: Convert packed BF16 to packed single-precision FP
+    // Takes __m128bh (8 bf16) and returns __m256 (8 fp32)
+    return _mm256_cvtpbh_ps(reinterpret_cast<__m128bh>(bf16_reg));
+  }
+
+  FRANKLIN_FORCE_INLINE static compute_register_type op(compute_register_type a,
+                                         compute_register_type b) {
+    return _mm256_add_ps(a, b);
+  }
+
+  // Convert 8 fp32 back to 8 bf16 using native AVX-512 BF16 instruction
+  // This provides proper rounding instead of truncation
+  FRANKLIN_FORCE_INLINE static storage_register_type
+  transform_from(compute_register_type fp32_reg) {
+    // _mm256_cvtneps_pbh: Convert packed single-precision FP to packed BF16
+    // Takes __m256 (8 fp32) and returns __m128bh (8 bf16) with rounding
+    __m128bh result = _mm256_cvtneps_pbh(fp32_reg);
+    return reinterpret_cast<__m128i>(result);
+  }
+
+  FRANKLIN_FORCE_INLINE static void store(value_type* ptr, storage_register_type reg) {
+    _mm_store_si128(reinterpret_cast<__m128i*>(ptr), reg);
+  }
+};
+
+template <concepts::ColumnPolicy ColPolicy, concepts::PipelinePolicy Pipeline>
+static void vectorize(column_vector<ColPolicy> const& fst,
+                      column_vector<ColPolicy> const& snd,
+                      column_vector<ColPolicy>& out) {
+
+  using value_type = typename ColPolicy::value_type;
+  const value_type* fst_ptr = fst.data_.data();
+  const value_type* snd_ptr = snd.data_.data();
+  value_type* out_ptr = out.data_.data();
+
+  std::size_t offset = 0;
+  const std::size_t step = Pipeline::elements_per_iteration;
+  const std::size_t num_elements = out.data_.size();
+
+  while (offset + step <= num_elements) {
+    // Load from memory
+    auto a_storage = Pipeline::load(fst_ptr + offset);
+    auto b_storage = Pipeline::load(snd_ptr + offset);
+
+    // Transform to compute domain (e.g., bf16 -> fp32)
+    auto a_compute = Pipeline::transform_to(a_storage);
+    auto b_compute = Pipeline::transform_to(b_storage);
+
+    // Perform operation in compute domain
+    auto result_compute = Pipeline::op(a_compute, b_compute);
+
+    // Transform back to storage domain (e.g., fp32 -> bf16)
+    auto result_storage = Pipeline::transform_from(result_compute);
+
+    // Store to memory
+    Pipeline::store(out_ptr + offset, result_storage);
+
+    offset += step;
+  }
+
+  // TODO: Handle tail elements (when num_elements % step != 0)
 }
 
-template <concepts::ColumnPolicy Policy, typename SIMDLoad, typename SIMDStore,
-          typename SIMDOp, typename Allocator>
-static void vectorize_destructive(column_vector<Policy>& mut,
-                                  column_vector<Policy> const& snd) {
+template <concepts::ColumnPolicy ColPolicy, concepts::PipelinePolicy Pipeline>
+static void vectorize_destructive(column_vector<ColPolicy>& mut,
+                                  column_vector<ColPolicy> const& snd) {
 
-  using register_type = __m256i;
+  using value_type = typename ColPolicy::value_type;
+  value_type* mut_ptr = mut.data_.data();
+  const value_type* snd_ptr = snd.data_.data();
 
-  register_type* load_store_pointer =
-      std::bit_cast<const register_type>(mut.data_.data());
-  register_type* other_pointer =
-      std::bit_cast<const register_type>(snd.data_.data());
+  std::size_t offset = 0;
+  const std::size_t step = Pipeline::elements_per_iteration;
+  const std::size_t num_elements = std::min(mut.data_.size(), snd.data_.size());
 
-  static constexpr auto simd_load = _mm256_load_si256;
-  static constexpr auto simd_op = _mm256_add_epi32;
-  static constexpr auto simd_store = _mm256_store_si256;
+  while (offset + step <= num_elements) {
+    // Load from both sources
+    auto a_storage = Pipeline::load(mut_ptr + offset);
+    auto b_storage = Pipeline::load(snd_ptr + offset);
 
-  auto offset = 0UL;
+    // Transform to compute domain (e.g., bf16 -> fp32)
+    auto a_compute = Pipeline::transform_to(a_storage);
+    auto b_compute = Pipeline::transform_to(b_storage);
 
-  while (true) {
-    auto a1 = simd_load(load_store_pointer + offset);
-    auto a2 = simd_load(other_pointer + offset);
+    // Perform operation in compute domain
+    auto result_compute = Pipeline::op(a_compute, b_compute);
 
-    auto b1 = simd_load(load_store_pointer + offset + 1);
-    auto b2 = simd_load(other_pointer + offset + 1);
+    // Transform back to storage domain (e.g., fp32 -> bf16)
+    auto result_storage = Pipeline::transform_from(result_compute);
 
-    auto c1 = simd_op(a1, b1);
-    auto c2 = simd_op(a2, b2);
+    // Store back to mut (reusing its buffer)
+    Pipeline::store(mut_ptr + offset, result_storage);
 
-    // Store back to new array
-    simd_store(load_store_pointer + offset, c1);
-    simd_store(load_store_pointer + offset + 1, c2);
-
-    if (offset >= mut.data_.size()) {
-      break;
-    }
+    offset += step;
   }
+
+  // TODO: Handle tail elements (when num_elements % step != 0)
 }
 
 // Element-wise addition
@@ -222,14 +299,14 @@ column_vector<Policy>::operator+(const column_vector& other) const {
         std::min<std::size_t>(data_.size(), other.data_.size());
     column_vector<Policy> output(effective_size, allocator_);
 
-    using register_type = __m256i;
+    vectorize<Policy, Int32Pipeline>(*this, other, output);
+    return output;
+  } else if constexpr (std::is_same_v<value_type, bf16>) {
+    const auto effective_size =
+        std::min<std::size_t>(data_.size(), other.data_.size());
+    column_vector<Policy> output(effective_size, allocator_);
 
-    static constexpr auto simd_load = _mm256_load_si256;
-    static constexpr auto simd_op = _mm256_add_epi32;
-    static constexpr auto simd_store = _mm256_store_si256;
-
-    vectorize<Policy, simd_load, simd_store, simd_op, allocator_type>(
-        *this, other, &output);
+    vectorize<Policy, BF16Pipeline>(*this, other, output);
     return output;
   } else {
     static_assert(!std::is_same_v<int, int>);
@@ -237,15 +314,32 @@ column_vector<Policy>::operator+(const column_vector& other) const {
 }
 
 template <concepts::ColumnPolicy Policy>
+column_vector<Policy>
+column_vector<Policy>::operator+(column_vector&& other) const {
+  if constexpr (std::is_same_v<value_type, std::int32_t>) {
+    vectorize_destructive<Policy, Int32Pipeline>(other, *this);
+    return other;
+  } else if constexpr (std::is_same_v<value_type, bf16>) {
+    vectorize_destructive<Policy, BF16Pipeline>(other, *this);
+    return other;
+  } else {
+    static_assert(!std::is_same_v<int, int>);
+  }
+}
+
+template <concepts::ColumnPolicy Policy>
 bool column_vector<Policy>::present(std::size_t index) const noexcept {
-  FRANKLIN_DEBUG_ASSERT(index < present_.size() &&
-                        "present() index out of bounds");
+  if (index >= present_.size()) [[unlikely]] {
+    return false;
+  }
   return present_[index];
 }
 
 template <concepts::ColumnPolicy Policy>
 bool column_vector<Policy>::present_unchecked(
     std::size_t index) const noexcept {
+  FRANKLIN_DEBUG_ASSERT(index < present_.size() &&
+                        "present() index out of bounds");
   return present_[index];
 }
 
