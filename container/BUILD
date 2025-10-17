@@ -49,6 +49,9 @@ cc_test(
     copts = [
         "-std=c++20",
         "-mavx2",
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512bf16",
     ],
     deps = [
         ":container",

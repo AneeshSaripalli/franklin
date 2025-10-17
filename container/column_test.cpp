@@ -694,6 +694,685 @@ TEST(ColumnVectorTest, PresentWithVariousOutOfBoundsIndices) {
   // present_unchecked() is unchecked - no bounds checking, no death test
 }
 
+// ============================================================================
+// NEW COMPREHENSIVE TESTS FOR ADD/SUB/MUL WITH INT32/FLOAT/BF16
+// ============================================================================
+
+// Test Int32 operations with proper aligned policies
+TEST(ColumnOperationsTest, Int32Addition) {
+  column_vector<Int32DefaultPolicy> a(16);
+  column_vector<Int32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+    b.data()[i] = static_cast<int32_t>(i * 2);
+  }
+
+  auto result = a + b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i + i * 2));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ColumnOperationsTest, Int32Subtraction) {
+  column_vector<Int32DefaultPolicy> a(16);
+  column_vector<Int32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i * 3);
+    b.data()[i] = static_cast<int32_t>(i);
+  }
+
+  auto result = a - b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i * 3 - i));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ColumnOperationsTest, Int32Multiplication) {
+  column_vector<Int32DefaultPolicy> a(16);
+  column_vector<Int32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i + 1);
+    b.data()[i] = static_cast<int32_t>(3);
+  }
+
+  auto result = a * b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>((i + 1) * 3));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+// Test Float32 operations
+TEST(ColumnOperationsTest, Float32Addition) {
+  column_vector<Float32DefaultPolicy> a(16);
+  column_vector<Float32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 1.5f;
+    b.data()[i] = static_cast<float>(i) * 2.5f;
+  }
+
+  auto result = a + b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 1.5f +
+                                          static_cast<float>(i) * 2.5f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ColumnOperationsTest, Float32Subtraction) {
+  column_vector<Float32DefaultPolicy> a(16);
+  column_vector<Float32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 5.0f;
+    b.data()[i] = static_cast<float>(i) * 2.0f;
+  }
+
+  auto result = a - b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 5.0f -
+                                          static_cast<float>(i) * 2.0f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ColumnOperationsTest, Float32Multiplication) {
+  column_vector<Float32DefaultPolicy> a(16);
+  column_vector<Float32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i + 1) * 2.0f;
+    b.data()[i] = 3.5f;
+  }
+
+  auto result = a * b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i + 1) * 2.0f * 3.5f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+// Test BF16 operations
+TEST(ColumnOperationsTest, BF16Addition) {
+  column_vector<BF16DefaultPolicy> a(16);
+  column_vector<BF16DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i));
+    b.data()[i] = bf16::from_float(static_cast<float>(i * 2));
+  }
+
+  auto result = a + b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    float expected = static_cast<float>(i) + static_cast<float>(i * 2);
+    float actual = result.data()[i].to_float();
+    // BF16 has reduced precision, allow for small differences
+    EXPECT_NEAR(actual, expected, 0.1f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ColumnOperationsTest, BF16Subtraction) {
+  column_vector<BF16DefaultPolicy> a(16);
+  column_vector<BF16DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i * 3));
+    b.data()[i] = bf16::from_float(static_cast<float>(i));
+  }
+
+  auto result = a - b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    float expected = static_cast<float>(i * 3) - static_cast<float>(i);
+    float actual = result.data()[i].to_float();
+    // BF16 has reduced precision, allow for small differences
+    EXPECT_NEAR(actual, expected, 0.1f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ColumnOperationsTest, BF16Multiplication) {
+  column_vector<BF16DefaultPolicy> a(16);
+  column_vector<BF16DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
+    b.data()[i] = bf16::from_float(2.0f);
+  }
+
+  auto result = a * b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    float expected = static_cast<float>(i + 1) * 2.0f;
+    float actual = result.data()[i].to_float();
+    // BF16 has reduced precision, allow for small differences
+    EXPECT_NEAR(actual, expected, 0.1f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+// Test bitmask intersection - CRITICAL REQUIREMENT
+TEST(ColumnOperationsTest, Int32BitmaskIntersection) {
+  column_vector<Int32DefaultPolicy> a(16);
+  column_vector<Int32DefaultPolicy> b(16);
+
+  // Set up data
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+    b.data()[i] = static_cast<int32_t>(i * 2);
+  }
+
+  // Mark some values as missing in a
+  a.present_mask()[2] = false;
+  a.present_mask()[5] = false;
+  a.present_mask()[8] = false;
+
+  // Mark some values as missing in b (some overlap, some don't)
+  b.present_mask()[5] = false; // Overlaps with a
+  b.present_mask()[7] = false;
+  b.present_mask()[11] = false;
+
+  auto result = a + b;
+
+  // Check bitmask intersection
+  for (size_t i = 0; i < 16; ++i) {
+    bool expected_present = a.present(i) && b.present(i);
+    EXPECT_EQ(result.present(i), expected_present)
+        << "Bitmask mismatch at index " << i;
+  }
+
+  // Specifically check the cases we set
+  EXPECT_FALSE(result.present(2));  // Missing in a
+  EXPECT_FALSE(result.present(5));  // Missing in both
+  EXPECT_FALSE(result.present(7));  // Missing in b
+  EXPECT_FALSE(result.present(8));  // Missing in a
+  EXPECT_FALSE(result.present(11)); // Missing in b
+  EXPECT_TRUE(result.present(0));   // Present in both
+  EXPECT_TRUE(result.present(1));   // Present in both
+}
+
+TEST(ColumnOperationsTest, Float32BitmaskIntersection) {
+  column_vector<Float32DefaultPolicy> a(16);
+  column_vector<Float32DefaultPolicy> b(16);
+
+  // Set up data
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 1.5f;
+    b.data()[i] = static_cast<float>(i) * 2.5f;
+  }
+
+  // Mark some values as missing
+  a.present_mask()[3] = false;
+  a.present_mask()[6] = false;
+  b.present_mask()[6] = false; // Overlaps
+  b.present_mask()[9] = false;
+
+  auto result = a * b;
+
+  // Check bitmask intersection
+  for (size_t i = 0; i < 16; ++i) {
+    bool expected_present = a.present(i) && b.present(i);
+    EXPECT_EQ(result.present(i), expected_present)
+        << "Bitmask mismask at index " << i;
+  }
+
+  EXPECT_FALSE(result.present(3));
+  EXPECT_FALSE(result.present(6));
+  EXPECT_FALSE(result.present(9));
+  EXPECT_TRUE(result.present(0));
+  EXPECT_TRUE(result.present(1));
+}
+
+TEST(ColumnOperationsTest, BF16BitmaskIntersection) {
+  column_vector<BF16DefaultPolicy> a(16);
+  column_vector<BF16DefaultPolicy> b(16);
+
+  // Set up data
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i));
+    b.data()[i] = bf16::from_float(static_cast<float>(i + 10));
+  }
+
+  // Mark some values as missing
+  a.present_mask()[1] = false;
+  a.present_mask()[4] = false;
+  b.present_mask()[4] = false; // Overlaps
+  b.present_mask()[10] = false;
+
+  auto result = a - b;
+
+  // Check bitmask intersection
+  for (size_t i = 0; i < 16; ++i) {
+    bool expected_present = a.present(i) && b.present(i);
+    EXPECT_EQ(result.present(i), expected_present)
+        << "Bitmask mismatch at index " << i;
+  }
+
+  EXPECT_FALSE(result.present(1));
+  EXPECT_FALSE(result.present(4));
+  EXPECT_FALSE(result.present(10));
+  EXPECT_TRUE(result.present(0));
+  EXPECT_TRUE(result.present(2));
+}
+
+// Test move semantics with operations
+TEST(ColumnOperationsTest, Int32AdditionWithMove) {
+  column_vector<Int32DefaultPolicy> a(16);
+  column_vector<Int32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+    b.data()[i] = static_cast<int32_t>(i * 2);
+  }
+
+  // Use move semantics for b
+  auto result = a + std::move(b);
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i + i * 2));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ColumnOperationsTest, Float32SubtractionWithMove) {
+  column_vector<Float32DefaultPolicy> a(16);
+  column_vector<Float32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 5.0f;
+    b.data()[i] = static_cast<float>(i) * 2.0f;
+  }
+
+  // Use move semantics
+  auto result = a - std::move(b);
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 5.0f -
+                                          static_cast<float>(i) * 2.0f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+// Test with larger sizes to ensure SIMD is working
+TEST(ColumnOperationsTest, LargeInt32Addition) {
+  const size_t size = 1024;
+  column_vector<Int32DefaultPolicy> a(size);
+  column_vector<Int32DefaultPolicy> b(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+    b.data()[i] = static_cast<int32_t>(i * 2);
+  }
+
+  auto result = a + b;
+
+  for (size_t i = 0; i < size; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i + i * 2));
+  }
+}
+
+TEST(ColumnOperationsTest, LargeFloat32Multiplication) {
+  const size_t size = 1024;
+  column_vector<Float32DefaultPolicy> a(size);
+  column_vector<Float32DefaultPolicy> b(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = static_cast<float>(i) * 0.5f;
+    b.data()[i] = 2.0f;
+  }
+
+  auto result = a * b;
+
+  for (size_t i = 0; i < size; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 0.5f * 2.0f);
+  }
+}
+
+TEST(ColumnOperationsTest, LargeBF16Subtraction) {
+  const size_t size = 1024;
+  column_vector<BF16DefaultPolicy> a(size);
+  column_vector<BF16DefaultPolicy> b(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i) * 3.0f);
+    b.data()[i] = bf16::from_float(static_cast<float>(i));
+  }
+
+  auto result = a - b;
+
+  for (size_t i = 0; i < size; ++i) {
+    float expected = static_cast<float>(i) * 3.0f - static_cast<float>(i);
+    float actual = result.data()[i].to_float();
+    // BF16 has only 7 mantissa bits (~1 in 128 precision)
+    // For large values like 2000, precision is ~16, so allow larger tolerance
+    float tolerance = std::max(16.0f, std::abs(expected) * 0.01f);
+    EXPECT_NEAR(actual, expected, tolerance) << "Failed at index " << i;
+  }
+}
+
+// ============================================================================
+// SCALAR OPERATION TESTS - COLUMN OP SCALAR AND SCALAR OP COLUMN
+// ============================================================================
+
+// Test Int32 scalar operations
+TEST(ScalarOperationsTest, Int32AddScalar) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  auto result = a + 10;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i + 10));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Int32SubtractScalar) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i * 5);
+  }
+
+  auto result = a - 3;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i * 5 - 3));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Int32MultiplyScalar) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  auto result = a * 7;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i * 7));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Int32ScalarAddColumn) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  // Test commutative property: 10 + column == column + 10
+  auto result = 10 + a;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(10 + i));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Int32ScalarMultiplyColumn) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i + 1);
+  }
+
+  // Test commutative property: 5 * column == column * 5
+  auto result = 5 * a;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(5 * (i + 1)));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Int32ScalarSubtractColumn) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  // Test non-commutative: 100 - column != column - 100
+  auto result = 100 - a;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(100 - i));
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+// Test Float32 scalar operations
+TEST(ScalarOperationsTest, Float32AddScalar) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 2.0f;
+  }
+
+  auto result = a + 5.5f;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 2.0f + 5.5f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Float32SubtractScalar) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 3.0f;
+  }
+
+  auto result = a - 1.5f;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 3.0f - 1.5f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Float32MultiplyScalar) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) + 1.0f;
+  }
+
+  auto result = a * 2.5f;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], (static_cast<float>(i) + 1.0f) * 2.5f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, Float32ScalarSubtractColumn) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 2.0f;
+  }
+
+  auto result = 10.0f - a;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], 10.0f - static_cast<float>(i) * 2.0f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+// Test BF16 scalar operations
+TEST(ScalarOperationsTest, BF16AddScalar) {
+  column_vector<BF16DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i));
+  }
+
+  auto result = a + bf16::from_float(5.0f);
+
+  for (size_t i = 0; i < 16; ++i) {
+    float expected = static_cast<float>(i) + 5.0f;
+    float actual = result.data()[i].to_float();
+    EXPECT_NEAR(actual, expected, 0.1f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+TEST(ScalarOperationsTest, BF16MultiplyScalar) {
+  column_vector<BF16DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
+  }
+
+  auto result = a * bf16::from_float(2.0f);
+
+  for (size_t i = 0; i < 16; ++i) {
+    float expected = static_cast<float>(i + 1) * 2.0f;
+    float actual = result.data()[i].to_float();
+    EXPECT_NEAR(actual, expected, 0.1f);
+    EXPECT_TRUE(result.present(i));
+  }
+}
+
+// Test scalar operations preserve bitmask
+TEST(ScalarOperationsTest, Int32ScalarPreservesBitmask) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  // Mark some as missing
+  a.present_mask()[2] = false;
+  a.present_mask()[7] = false;
+  a.present_mask()[11] = false;
+
+  auto result = a * 5;
+
+  // Bitmask should be preserved (scalar is always "present")
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.present(i), a.present(i))
+        << "Bitmask mismatch at index " << i;
+  }
+
+  EXPECT_FALSE(result.present(2));
+  EXPECT_FALSE(result.present(7));
+  EXPECT_FALSE(result.present(11));
+  EXPECT_TRUE(result.present(0));
+  EXPECT_TRUE(result.present(5));
+}
+
+TEST(ScalarOperationsTest, Float32ScalarPreservesBitmask) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 2.0f;
+  }
+
+  // Mark some as missing
+  a.present_mask()[4] = false;
+  a.present_mask()[9] = false;
+
+  auto result = a + 10.0f;
+
+  // Bitmask should be preserved
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.present(i), a.present(i));
+  }
+
+  EXPECT_FALSE(result.present(4));
+  EXPECT_FALSE(result.present(9));
+  EXPECT_TRUE(result.present(0));
+}
+
+// Test with large sizes
+TEST(ScalarOperationsTest, LargeInt32MultiplyScalar) {
+  const size_t size = 1024;
+  column_vector<Int32DefaultPolicy> a(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  auto result = a * 3;
+
+  for (size_t i = 0; i < size; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i * 3));
+  }
+}
+
+TEST(ScalarOperationsTest, LargeFloat32AddScalar) {
+  const size_t size = 1024;
+  column_vector<Float32DefaultPolicy> a(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = static_cast<float>(i) * 0.5f;
+  }
+
+  auto result = a + 100.0f;
+
+  for (size_t i = 0; i < size; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 0.5f + 100.0f);
+  }
+}
+
+// Test chaining operations
+TEST(ScalarOperationsTest, ChainedScalarOperations) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i);
+  }
+
+  // (a * 2) + 5
+  auto result = (a * 2.0f) + 5.0f;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_FLOAT_EQ(result.data()[i], static_cast<float>(i) * 2.0f + 5.0f);
+  }
+}
+
+TEST(ScalarOperationsTest, MixedScalarAndVectorOps) {
+  column_vector<Int32DefaultPolicy> a(16);
+  column_vector<Int32DefaultPolicy> b(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+    b.data()[i] = static_cast<int32_t>(i * 2);
+  }
+
+  // (a * 3) + b
+  auto result = (a * 3) + b;
+
+  for (size_t i = 0; i < 16; ++i) {
+    EXPECT_EQ(result.data()[i], static_cast<int32_t>(i * 3 + i * 2));
+  }
+}
+
 } // namespace franklin
 
 int main(int argc, char** argv) {
