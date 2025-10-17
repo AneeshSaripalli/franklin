@@ -112,3 +112,19 @@ cc_binary(
         "@google_benchmark//:benchmark",
     ],
 )
+
+cc_binary(
+    name = "kernel_fusion_benchmark",
+    srcs = ["kernel_fusion_benchmark.cpp"],
+    copts = [
+        "-std=c++20",
+        "-mavx2",
+        "-mfma",
+        "-O3",
+        "-march=native",
+    ],
+    deps = [
+        "//container:container",
+        "@google_benchmark//:benchmark",
+    ],
+)
