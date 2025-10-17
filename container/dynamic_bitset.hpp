@@ -3,6 +3,7 @@
 
 #include "core/error_collector.hpp"
 #include "memory/aligned_allocator.hpp"
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <immintrin.h>
@@ -31,9 +32,9 @@ inline std::uint64_t simd_count_blocks(const std::uint64_t* data,
   _mm256_store_si256(reinterpret_cast<__m256i*>(counts), vec_count);
   std::uint64_t result = counts[0] + counts[1] + counts[2] + counts[3];
 
-  // Handle remaining full blocks with scalar popcnt
+  // Handle remaining full blocks with scalar popcount
   for (std::size_t i = simd_blocks * 4; i < num_blocks; ++i) {
-    result += __builtin_popcountll(data[i]);
+    result += std::popcount(data[i]);
   }
 
   return result;
@@ -289,11 +290,11 @@ public:
     // Count the last block containing actual data
     if (remainder == 0) {
       // Last block is full (num_bits_ is multiple of 64)
-      result += __builtin_popcountll(data[last_block_idx]);
+      result += std::popcount(data[last_block_idx]);
     } else {
       // Last block is partial, mask off bits beyond num_bits_
       block_type mask = (block_type(1) << remainder) - 1;
-      result += __builtin_popcountll(data[last_block_idx] & mask);
+      result += std::popcount(data[last_block_idx] & mask);
     }
 
     return result;
