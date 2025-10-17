@@ -69,13 +69,6 @@ public:
 
   // Element-wise operations
   column_vector operator+(const column_vector& other) const;
-  column_vector operator-(const column_vector& other) const;
-  column_vector operator*(const column_vector& other) const;
-  column_vector operator/(const column_vector& other) const;
-  column_vector operator^(const column_vector& other) const;
-  column_vector operator&(const column_vector& other) const;
-  column_vector operator%(const column_vector& other) const;
-  column_vector operator|(const column_vector& other) const;
 
   // Check if value at index is present (not missing/null)
   // Performs bounds checking in debug builds
@@ -238,67 +231,9 @@ column_vector<Policy>::operator+(const column_vector& other) const {
     vectorize<Policy, simd_load, simd_store, simd_op, allocator_type>(
         *this, other, &output);
     return output;
-  } else if (std::is_same_v<value_type, float>) {
-
   } else {
     static_assert(!std::is_same_v<int, int>);
   }
-}
-
-// Element-wise subtraction
-template <concepts::ColumnPolicy Policy>
-column_vector<Policy>
-column_vector<Policy>::operator-(const column_vector& other) const {
-  // TODO: Implement element-wise subtraction
-  return column_vector{allocator_};
-}
-
-// Element-wise multiplication
-template <concepts::ColumnPolicy Policy>
-column_vector<Policy>
-column_vector<Policy>::operator*(const column_vector& other) const {
-  // TODO: Implement element-wise multiplication
-  return column_vector{allocator_};
-}
-
-// Element-wise division
-template <concepts::ColumnPolicy Policy>
-column_vector<Policy>
-column_vector<Policy>::operator/(const column_vector& other) const {
-  // TODO: Implement element-wise division
-  return column_vector{allocator_};
-}
-
-// Element-wise XOR
-template <concepts::ColumnPolicy Policy>
-column_vector<Policy>
-column_vector<Policy>::operator^(const column_vector& other) const {
-  // TODO: Implement element-wise XOR
-  return column_vector{allocator_};
-}
-
-// Element-wise bitwise AND
-template <concepts::ColumnPolicy Policy>
-column_vector<Policy>
-column_vector<Policy>::operator&(const column_vector& other) const {
-  // TODO: Implement element-wise bitwise AND
-  return column_vector{allocator_};
-}
-
-// Element-wise modulo
-template <concepts::ColumnPolicy Policy>
-column_vector<Policy>
-column_vector<Policy>::operator%(const column_vector& other) const {
-  // TODO: Implement element-wise modulo
-  return column_vector{allocator_};
-}
-
-// Element-wise bitwise OR
-template <concepts::ColumnPolicy Policy>
-column_vector<Policy>
-column_vector<Policy>::operator|(const column_vector& other) const {
-  // TODO: Implement element-wise bitwise OR
-  return column_vector{allocator_};
 }
 
 template <concepts::ColumnPolicy Policy>
