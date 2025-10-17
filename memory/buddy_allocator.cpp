@@ -58,6 +58,14 @@ buddy_allocator::~buddy_allocator() {
   }
 }
 
+std::size_t buddy_allocator::pool_size() const {
+  return pool_size_;
+}
+
+std::size_t buddy_allocator::num_levels() const {
+  return num_levels_;
+}
+
 std::size_t buddy_allocator::size_to_level(std::size_t size) const {
   // Round size up to next power of 2
   std::size_t rounded = next_pow2(size);

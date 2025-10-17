@@ -11,7 +11,7 @@ namespace franklin {
 #endif // FRANKLIN_CACHE_LINE_SIZE
 
 #ifndef FRANKLIN_FORCE_INLINE
-#define FRANKLIN_FORCE_INLINE __attribute__((always_inline))
+#define FRANKLIN_FORCE_INLINE __attribute__((always_inline)) inline
 #endif // FRANKLIN_FORCE_INLINE
 
 #ifndef FRANKLIN_FORCE_NOINLINE

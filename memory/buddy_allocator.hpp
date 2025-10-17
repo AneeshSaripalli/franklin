@@ -37,10 +37,10 @@ public:
   void deallocate(void* ptr);
 
   // Get the size of the pool managed by this allocator.
-  std::size_t pool_size() const { return pool_size_; }
+  std::size_t pool_size() const;
 
   // Get the number of levels in the buddy system.
-  std::size_t num_levels() const { return num_levels_; }
+  std::size_t num_levels() const;
 
 private:
   // Calculate which level a size belongs to (0 = largest blocks)
