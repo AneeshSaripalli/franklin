@@ -3,7 +3,6 @@ cc_library(
     hdrs = [
         "column.hpp",
         "dynamic_bitset.hpp",
-        "interpreter.hpp",
     ],
     copts = ["-std=c++20"],
     visibility = ["//visibility:public"],
@@ -43,17 +42,6 @@ cc_test(
     ],
 )
 
-
-cc_test(
-    name = "interpreter_test",
-    srcs = ["interpreter_test.cpp"],
-    copts = ["-std=c++20"],
-    deps = [
-        ":container",
-        "@googletest//:gtest",
-        "@googletest//:gtest_main",
-    ],
-)
 
 cc_test(
     name = "column_test",
