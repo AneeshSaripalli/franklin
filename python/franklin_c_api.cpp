@@ -10,6 +10,7 @@ namespace franklin {
 // Use default policies
 using Int32Policy = franklin::Int32DefaultPolicy;
 using Float32Policy = franklin::Float32DefaultPolicy;
+using BF16Policy = franklin::BF16DefaultPolicy;
 
 // Type-erased column wrapper - stores the policy type and pointer to column
 struct FranklinColumnImpl {
@@ -45,15 +46,21 @@ struct FranklinColumnImpl {
   }
 
   size_t get_size() const {
+    // Return the logical size (count of present elements) not the padded buffer
+    // size
     switch (policy_id) {
-    case DataTypeEnum::Int32Default:
-      return static_cast<column_vector<Int32Policy>*>(col_ptr)->data().size();
-    case DataTypeEnum::Float32Default:
-      return static_cast<column_vector<Float32Policy>*>(col_ptr)->data().size();
-    case DataTypeEnum::BF16Default:
-      return static_cast<column_vector<BF16DefaultPolicy>*>(col_ptr)
-          ->data()
-          .size();
+    case DataTypeEnum::Int32Default: {
+      auto* col = static_cast<column_vector<Int32Policy>*>(col_ptr);
+      return col->present_mask().count();
+    }
+    case DataTypeEnum::Float32Default: {
+      auto* col = static_cast<column_vector<Float32Policy>*>(col_ptr);
+      return col->present_mask().count();
+    }
+    case DataTypeEnum::BF16Default: {
+      auto* col = static_cast<column_vector<BF16DefaultPolicy>*>(col_ptr);
+      return col->present_mask().count();
+    }
     default:
       return 0;
     }
@@ -79,6 +86,17 @@ struct FranklinColumnImpl {
       throw std::out_of_range("Index out of bounds");
     }
     return col->data()[index];
+  }
+
+  float get_bf16(size_t index) const {
+    if (policy_id != DataTypeEnum::BF16Default) {
+      throw std::runtime_error("Column is not bf16");
+    }
+    auto* col = static_cast<column_vector<BF16Policy>*>(col_ptr);
+    if (index >= col->data().size()) {
+      throw std::out_of_range("Index out of bounds");
+    }
+    return col->data()[index].to_float();
   }
 };
 
@@ -112,6 +130,11 @@ FranklinColumn* franklin_column_create(FranklinDataType type, size_t size,
           new column_vector<Float32Policy>(size, static_cast<float>(value));
       return reinterpret_cast<FranklinColumn*>(new FranklinColumnImpl(col));
     }
+    case FRANKLIN_BF16: {
+      auto* col = new column_vector<BF16Policy>(
+          size, bf16::from_float(static_cast<float>(value)));
+      return reinterpret_cast<FranklinColumn*>(new FranklinColumnImpl(col));
+    }
     default:
       return nullptr;
     }
@@ -128,6 +151,11 @@ FranklinColumn* franklin_column_create_int32(size_t size, int32_t value) {
 
 FranklinColumn* franklin_column_create_float32(size_t size, float value) {
   return franklin_column_create(FRANKLIN_FLOAT32, size,
+                                static_cast<double>(value));
+}
+
+FranklinColumn* franklin_column_create_bf16(size_t size, float value) {
+  return franklin_column_create(FRANKLIN_BF16, size,
                                 static_cast<double>(value));
 }
 
@@ -176,6 +204,12 @@ bool franklin_interpreter_register(FranklinInterpreter* interp,
                                           std::move(*typed_col));
       delete col_impl;
       return true;
+    } else if (col_impl->policy_id == DataTypeEnum::BF16Default) {
+      auto* typed_col = col_impl->get_as<BF16Policy>();
+      interp_impl->interp.register_column(std::string(name),
+                                          std::move(*typed_col));
+      delete col_impl;
+      return true;
     }
 
     return false;
@@ -206,6 +240,12 @@ FranklinColumn* franklin_interpreter_eval(FranklinInterpreter* interp,
       auto* typed_col = result.get_as<Float32Policy>();
       // Copy (don't move) the data - result owns the pointer and will delete it
       auto* result_col = new column_vector<Float32Policy>(*typed_col);
+      return reinterpret_cast<FranklinColumn*>(
+          new FranklinColumnImpl(result_col));
+    } else if (policy == DataTypeEnum::BF16Default) {
+      auto* typed_col = result.get_as<BF16Policy>();
+      // Copy (don't move) the data - result owns the pointer and will delete it
+      auto* result_col = new column_vector<BF16Policy>(*typed_col);
       return reinterpret_cast<FranklinColumn*>(
           new FranklinColumnImpl(result_col));
     }
@@ -275,6 +315,18 @@ float franklin_column_get_float32(const FranklinColumn* col, size_t index) {
   try {
     auto* impl = reinterpret_cast<const FranklinColumnImpl*>(col);
     return impl->get_float32(index);
+  } catch (...) {
+    return 0.0f;
+  }
+}
+
+float franklin_column_get_bf16(const FranklinColumn* col, size_t index) {
+  if (!col)
+    return 0.0f;
+
+  try {
+    auto* impl = reinterpret_cast<const FranklinColumnImpl*>(col);
+    return impl->get_bf16(index);
   } catch (...) {
     return 0.0f;
   }

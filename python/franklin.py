@@ -57,6 +57,7 @@ class DataType:
     """Franklin data types."""
     INT32 = 0
     FLOAT32 = 1
+    BF16 = 2
 
 
 class Column:
@@ -72,12 +73,12 @@ class Column:
         Create a column.
 
         Args:
-            dtype: "int32" or "float32" or DataType.INT32/FLOAT32
+            dtype: "int32", "float32", "bf16", or DataType.INT32/FLOAT32/BF16
             size: Number of elements
             value: Initial value for all elements
         """
         if isinstance(dtype, str):
-            dtype_map = {"int32": DataType.INT32, "float32": DataType.FLOAT32}
+            dtype_map = {"int32": DataType.INT32, "float32": DataType.FLOAT32, "bf16": DataType.BF16}
             if dtype not in dtype_map:
                 raise ValueError(f"Unknown dtype: {dtype}")
             dtype = dtype_map[dtype]

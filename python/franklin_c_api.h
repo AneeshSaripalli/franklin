@@ -17,6 +17,7 @@ typedef struct FranklinInterpreter FranklinInterpreter;
 typedef enum {
   FRANKLIN_INT32 = 0,
   FRANKLIN_FLOAT32 = 1,
+  FRANKLIN_BF16 = 2,
 } FranklinDataType;
 
 // ========== Column API ==========
@@ -30,6 +31,7 @@ FranklinColumn* franklin_column_create(FranklinDataType type, size_t size,
 // Legacy type-specific creators (for backwards compatibility)
 FranklinColumn* franklin_column_create_int32(size_t size, int32_t value);
 FranklinColumn* franklin_column_create_float32(size_t size, float value);
+FranklinColumn* franklin_column_create_bf16(size_t size, float value);
 
 void franklin_column_destroy(FranklinColumn* col);
 
@@ -37,6 +39,7 @@ void franklin_column_destroy(FranklinColumn* col);
 size_t franklin_column_size(const FranklinColumn* col);
 int32_t franklin_column_get_int32(const FranklinColumn* col, size_t index);
 float franklin_column_get_float32(const FranklinColumn* col, size_t index);
+float franklin_column_get_bf16(const FranklinColumn* col, size_t index);
 
 // ========== Interpreter API ==========
 
