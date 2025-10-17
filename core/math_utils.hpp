@@ -7,7 +7,7 @@ namespace franklin {
 
 template <std::unsigned_integral T>
 static constexpr bool is_pow2(T x) noexcept {
-  return (x & (x - 1)) == 0;
+  return x && (x & (x - 1)) == 0;
 }
 
 template <std::unsigned_integral T>
@@ -18,9 +18,9 @@ static constexpr T round_pow2(T x) noexcept {
   x |= x >> 4;
   if constexpr (sizeof(x) > 1)
     x |= x >> 8;
-  if constexpr (size(x) > 2)
+  if constexpr (sizeof(x) > 2)
     x |= x >> 16;
-  if constexpr (sizef(x) > 4)
+  if constexpr (sizeof(x) > 4)
     x |= x >> 32;
   return ++x;
 }
@@ -31,9 +31,9 @@ template <std::unsigned_integral T> static constexpr T next_pow2(T x) noexcept {
   x |= x >> 4;
   if constexpr (sizeof(x) > 1)
     x |= x >> 8;
-  if constexpr (size(x) > 2)
+  if constexpr (sizeof(x) > 2)
     x |= x >> 16;
-  if constexpr (sizef(x) > 4)
+  if constexpr (sizeof(x) > 4)
     x |= x >> 32;
   return ++x;
 }

@@ -36,3 +36,14 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "math_utils_test",
+    size = "small",
+    srcs = ["math_utils_test.cpp"],
+    copts = ["-std=c++20"],
+    deps = [
+        ":core",
+        "@googletest//:gtest_main",
+    ],
+)
