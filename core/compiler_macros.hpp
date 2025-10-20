@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <execinfo.h>
 
 namespace franklin {
 
@@ -36,6 +37,23 @@ namespace franklin {
 #define FRANKLIN_DEBUG_ASSERT(X) FRANKLIN_ASSERT(X)
 #endif // NDEBUG
 #endif // FRANKLIN_DEBUG_ASSERT
+
+#ifndef FRANKLIN_ABORT
+#define FRANKLIN_ABORT(msg)                                                    \
+  do {                                                                         \
+    std::fprintf(stderr, "Fatal error: %s, file %s, line %d\n", (msg),         \
+                 __FILE__, __LINE__);                                          \
+    std::fprintf(stderr, "Stack trace:\n");                                    \
+    void* callstack[128];                                                      \
+    int frames = backtrace(callstack, 128);                                    \
+    char** symbols = backtrace_symbols(callstack, frames);                     \
+    for (int i = 0; i < frames; ++i) {                                         \
+      std::fprintf(stderr, "  %s\n", symbols[i]);                              \
+    }                                                                          \
+    free(symbols);                                                             \
+    std::abort();                                                              \
+  } while (0)
+#endif // FRANKLIN_ABORT
 
 } // namespace franklin
 

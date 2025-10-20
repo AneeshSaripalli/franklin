@@ -128,3 +128,36 @@ cc_binary(
         "@google_benchmark//:benchmark",
     ],
 )
+
+cc_binary(
+    name = "asmjit_kernel_benchmark",
+    srcs = ["asmjit_kernel_benchmark.cpp"],
+    copts = [
+        "-std=c++20",
+        "-mavx2",
+        "-O3",
+        "-march=native",
+    ],
+    deps = [
+        "@asmjit//:asmjit",
+    ],
+)
+
+cc_binary(
+    name = "column_reduction_benchmark",
+    srcs = ["column_reduction_benchmark.cpp"],
+    copts = [
+        "-std=c++20",
+        "-mavx2",
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512vpopcntdq",
+        "-mavx512bf16",
+        "-O3",
+        "-march=native",
+    ],
+    deps = [
+        "//container:container",
+        "@google_benchmark//:benchmark",
+    ],
+)

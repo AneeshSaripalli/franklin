@@ -29,3 +29,11 @@ http_archive(
     strip_prefix = "benchmark-1.9.1",
     sha256 = "32131c08ee31eeff2c8968d7e874f3cb648034377dfc32a4c377fa8796d84981",
 )
+
+# AsmJit - JIT assembler for x86/x64
+http_archive(
+    name = "asmjit",
+    url = "https://github.com/asmjit/asmjit/archive/refs/heads/master.zip",
+    strip_prefix = "asmjit-master",
+    build_file = "@//third_party:asmjit.BUILD",
+)

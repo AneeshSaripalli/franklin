@@ -513,6 +513,11 @@ public:
     return result;
   }
 
+  // Public accessor for blocks (needed for reduction operations in column.hpp)
+  const std::vector<block_type, allocator_type>& blocks() const noexcept {
+    return blocks_;
+  }
+
 private:
   // OPTIMIZATION 15: Replace division with bit shift
   // Always round up to cache line boundaries (8 blocks = 64 bytes)

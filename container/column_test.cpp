@@ -1373,6 +1373,368 @@ TEST(ScalarOperationsTest, MixedScalarAndVectorOps) {
   }
 }
 
+// ============================================================================
+// REDUCTION OPERATION TESTS - SUM, PRODUCT, MIN, MAX, ANY, ALL
+// ============================================================================
+
+// Test Int32 sum reduction
+TEST(ReductionOperationsTest, Int32Sum) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i + 1); // 1, 2, 3, ..., 16
+  }
+
+  int32_t result = a.sum();
+  // Sum of 1 to 16 = 16 * 17 / 2 = 136
+  EXPECT_EQ(result, 136);
+}
+
+TEST(ReductionOperationsTest, Int32SumWithMissing) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i + 1);
+  }
+
+  // Mark some values as missing
+  a.present_mask().set(0, false);  // Remove 1
+  a.present_mask().set(5, false);  // Remove 6
+  a.present_mask().set(15, false); // Remove 16
+
+  int32_t result = a.sum();
+  // Sum of 1 to 16 - (1 + 6 + 16) = 136 - 23 = 113
+  EXPECT_EQ(result, 113);
+}
+
+TEST(ReductionOperationsTest, Int32SumEmpty) {
+  column_vector<Int32DefaultPolicy> a(0);
+  int32_t result = a.sum();
+  EXPECT_EQ(result, 0); // Identity for sum
+}
+
+TEST(ReductionOperationsTest, Int32SumAllMissing) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i + 1);
+    a.present_mask().set(i, false);
+  }
+
+  int32_t result = a.sum();
+  EXPECT_EQ(result, 0); // All masked out, sum = 0
+}
+
+// Test Int32 product reduction
+TEST(ReductionOperationsTest, Int32Product) {
+  column_vector<Int32DefaultPolicy> a(5);
+
+  for (size_t i = 0; i < 5; ++i) {
+    a.data()[i] = static_cast<int32_t>(i + 2); // 2, 3, 4, 5, 6
+  }
+
+  int32_t result = a.product();
+  // 2 * 3 * 4 * 5 * 6 = 720
+  EXPECT_EQ(result, 720);
+}
+
+TEST(ReductionOperationsTest, Int32ProductWithMissing) {
+  column_vector<Int32DefaultPolicy> a(5);
+
+  for (size_t i = 0; i < 5; ++i) {
+    a.data()[i] = static_cast<int32_t>(i + 2); // 2, 3, 4, 5, 6
+  }
+
+  a.present_mask().set(2, false); // Remove 4
+
+  int32_t result = a.product();
+  // 2 * 3 * 5 * 6 = 180
+  EXPECT_EQ(result, 180);
+}
+
+TEST(ReductionOperationsTest, Int32ProductEmpty) {
+  column_vector<Int32DefaultPolicy> a(0);
+  int32_t result = a.product();
+  EXPECT_EQ(result, 1); // Identity for product
+}
+
+// Test Int32 min/max reduction
+TEST(ReductionOperationsTest, Int32Min) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(100 - i); // 100, 99, 98, ..., 85
+  }
+
+  int32_t result = a.min();
+  EXPECT_EQ(result, 85);
+}
+
+TEST(ReductionOperationsTest, Int32MinWithMissing) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(100 - i);
+  }
+
+  a.present_mask().set(15, false); // Remove the minimum (85)
+
+  int32_t result = a.min();
+  EXPECT_EQ(result, 86); // Next minimum
+}
+
+TEST(ReductionOperationsTest, Int32Max) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(100 + i); // 100, 101, ..., 115
+  }
+
+  int32_t result = a.max();
+  EXPECT_EQ(result, 115);
+}
+
+TEST(ReductionOperationsTest, Int32MaxWithMissing) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(100 + i);
+  }
+
+  a.present_mask().set(15, false); // Remove the maximum (115)
+
+  int32_t result = a.max();
+  EXPECT_EQ(result, 114); // Next maximum
+}
+
+// Test Float32 reductions
+TEST(ReductionOperationsTest, Float32Sum) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i + 1) * 2.5f;
+  }
+
+  float result = a.sum();
+  // Sum of (1 to 16) * 2.5 = 136 * 2.5 = 340.0
+  EXPECT_FLOAT_EQ(result, 340.0f);
+}
+
+TEST(ReductionOperationsTest, Float32Product) {
+  column_vector<Float32DefaultPolicy> a(4);
+
+  a.data()[0] = 1.5f;
+  a.data()[1] = 2.0f;
+  a.data()[2] = 3.0f;
+  a.data()[3] = 4.0f;
+
+  float result = a.product();
+  // 1.5 * 2.0 * 3.0 * 4.0 = 36.0
+  EXPECT_FLOAT_EQ(result, 36.0f);
+}
+
+TEST(ReductionOperationsTest, Float32Min) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(100 - i) * 0.5f;
+  }
+
+  float result = a.min();
+  EXPECT_FLOAT_EQ(result, 42.5f); // (100 - 15) * 0.5 = 42.5
+}
+
+TEST(ReductionOperationsTest, Float32Max) {
+  column_vector<Float32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<float>(i) * 1.5f;
+  }
+
+  float result = a.max();
+  EXPECT_FLOAT_EQ(result, 22.5f); // 15 * 1.5 = 22.5
+}
+
+// Test BF16 reductions
+TEST(ReductionOperationsTest, BF16Sum) {
+  column_vector<BF16DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
+  }
+
+  bf16 result = a.sum();
+  // Sum of 1 to 16 = 136
+  EXPECT_NEAR(result.to_float(), 136.0f, 1.0f); // BF16 precision
+}
+
+TEST(ReductionOperationsTest, BF16Product) {
+  column_vector<BF16DefaultPolicy> a(4);
+
+  a.data()[0] = bf16::from_float(2.0f);
+  a.data()[1] = bf16::from_float(3.0f);
+  a.data()[2] = bf16::from_float(1.5f);
+  a.data()[3] = bf16::from_float(2.0f);
+
+  bf16 result = a.product();
+  // 2 * 3 * 1.5 * 2 = 18
+  EXPECT_NEAR(result.to_float(), 18.0f, 0.5f);
+}
+
+TEST(ReductionOperationsTest, BF16Min) {
+  column_vector<BF16DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(100 - i));
+  }
+
+  bf16 result = a.min();
+  EXPECT_NEAR(result.to_float(), 85.0f, 0.5f);
+}
+
+TEST(ReductionOperationsTest, BF16Max) {
+  column_vector<BF16DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
+  }
+
+  bf16 result = a.max();
+  EXPECT_NEAR(result.to_float(), 16.0f, 0.5f);
+}
+
+// Test any() and all() operations
+TEST(ReductionOperationsTest, AnyAllPresent) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  EXPECT_TRUE(a.any()); // At least one element present
+  EXPECT_TRUE(a.all()); // All elements present
+}
+
+TEST(ReductionOperationsTest, AnySomePresent) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+  }
+
+  // Mark most as missing, leave one
+  for (size_t i = 1; i < 16; ++i) {
+    a.present_mask().set(i, false);
+  }
+
+  EXPECT_TRUE(a.any());  // At least one present (index 0)
+  EXPECT_FALSE(a.all()); // Not all present
+}
+
+TEST(ReductionOperationsTest, AnyNonePresent) {
+  column_vector<Int32DefaultPolicy> a(16);
+
+  for (size_t i = 0; i < 16; ++i) {
+    a.data()[i] = static_cast<int32_t>(i);
+    a.present_mask().set(i, false);
+  }
+
+  EXPECT_FALSE(a.any()); // No elements present
+  EXPECT_FALSE(a.all()); // No elements present
+}
+
+TEST(ReductionOperationsTest, AnyAllEmpty) {
+  column_vector<Int32DefaultPolicy> a(0);
+
+  EXPECT_FALSE(a.any()); // Empty column
+  EXPECT_TRUE(a.all());  // Vacuously true - all zero elements are present
+}
+
+// Test with large sizes (tail handling)
+TEST(ReductionOperationsTest, LargeInt32SumNonAligned) {
+  // Use non-aligned size to test tail handling
+  const size_t size = 1017; // Not a multiple of 8
+  column_vector<Int32DefaultPolicy> a(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = 1; // Each element contributes 1
+  }
+
+  int32_t result = a.sum();
+  EXPECT_EQ(result, static_cast<int32_t>(size));
+}
+
+TEST(ReductionOperationsTest, LargeFloat32MinNonAligned) {
+  const size_t size = 1013; // Prime number, not aligned
+  column_vector<Float32DefaultPolicy> a(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = static_cast<float>(size - i);
+  }
+
+  float result = a.min();
+  EXPECT_FLOAT_EQ(result, 1.0f); // Last element
+}
+
+TEST(ReductionOperationsTest, LargeBF16ProductIdentity) {
+  // Test that product of all 1s = 1
+  const size_t size = 512;
+  column_vector<BF16DefaultPolicy> a(size);
+
+  for (size_t i = 0; i < size; ++i) {
+    a.data()[i] = bf16::from_float(1.0f);
+  }
+
+  bf16 result = a.product();
+  EXPECT_NEAR(result.to_float(), 1.0f, 0.01f);
+}
+
+// Test edge case: single element
+TEST(ReductionOperationsTest, SingleElementSum) {
+  column_vector<Int32DefaultPolicy> a(1);
+  a.data()[0] = 42;
+
+  EXPECT_EQ(a.sum(), 42);
+  EXPECT_EQ(a.product(), 42);
+  EXPECT_EQ(a.min(), 42);
+  EXPECT_EQ(a.max(), 42);
+}
+
+TEST(ReductionOperationsTest, SingleElementMissing) {
+  column_vector<Int32DefaultPolicy> a(1);
+  a.data()[0] = 42;
+  a.present_mask().set(0, false);
+
+  EXPECT_EQ(a.sum(), 0);                                      // Identity
+  EXPECT_EQ(a.product(), 1);                                  // Identity
+  EXPECT_EQ(a.min(), std::numeric_limits<int32_t>::max());    // Identity
+  EXPECT_EQ(a.max(), std::numeric_limits<int32_t>::lowest()); // Identity
+}
+
+// Test negative numbers
+TEST(ReductionOperationsTest, Int32SumNegative) {
+  column_vector<Int32DefaultPolicy> a(8);
+
+  for (size_t i = 0; i < 8; ++i) {
+    a.data()[i] = static_cast<int32_t>(i) - 4; // -4, -3, -2, -1, 0, 1, 2, 3
+  }
+
+  int32_t result = a.sum();
+  // Sum = -4 - 3 - 2 - 1 + 0 + 1 + 2 + 3 = -4
+  EXPECT_EQ(result, -4);
+}
+
+TEST(ReductionOperationsTest, Int32MinNegative) {
+  column_vector<Int32DefaultPolicy> a(8);
+
+  for (size_t i = 0; i < 8; ++i) {
+    a.data()[i] = static_cast<int32_t>(i) - 4;
+  }
+
+  EXPECT_EQ(a.min(), -4);
+  EXPECT_EQ(a.max(), 3);
+}
+
 } // namespace franklin
 
 int main(int argc, char** argv) {

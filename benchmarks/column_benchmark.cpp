@@ -36,14 +36,16 @@ static void BM_Int32_Add_ElementWise(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Int32DefaultPolicy> a(size);
   column_vector<Int32DefaultPolicy> b(size);
+  column_vector<Int32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a + b;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize bypasses operator overload overhead
+    vectorize<Int32DefaultPolicy, Int32Pipeline<OpType::Add>>(a, b, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(int32_t) * 3; // 2 reads + 1 write
   }
 
@@ -57,14 +59,16 @@ static void BM_Int32_Mul_ElementWise(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Int32DefaultPolicy> a(size);
   column_vector<Int32DefaultPolicy> b(size);
+  column_vector<Int32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a * b;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize bypasses operator overload overhead
+    vectorize<Int32DefaultPolicy, Int32Pipeline<OpType::Mul>>(a, b, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(int32_t) * 3;
   }
 
@@ -79,14 +83,16 @@ static void BM_Float32_Add_ElementWise(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Float32DefaultPolicy> a(size);
   column_vector<Float32DefaultPolicy> b(size);
+  column_vector<Float32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a + b;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize bypasses operator overload overhead
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Add>>(a, b, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(float) * 3;
   }
 
@@ -100,14 +106,16 @@ static void BM_Float32_Mul_ElementWise(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Float32DefaultPolicy> a(size);
   column_vector<Float32DefaultPolicy> b(size);
+  column_vector<Float32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a * b;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize bypasses operator overload overhead
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Mul>>(a, b, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(float) * 3;
   }
 
@@ -122,14 +130,16 @@ static void BM_BF16_Add_ElementWise(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<BF16DefaultPolicy> a(size);
   column_vector<BF16DefaultPolicy> b(size);
+  column_vector<BF16DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a + b;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize bypasses operator overload overhead
+    vectorize<BF16DefaultPolicy, BF16Pipeline<OpType::Add>>(a, b, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(bf16) * 3;
   }
 
@@ -143,14 +153,16 @@ static void BM_BF16_Mul_ElementWise(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<BF16DefaultPolicy> a(size);
   column_vector<BF16DefaultPolicy> b(size);
+  column_vector<BF16DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a * b;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize bypasses operator overload overhead
+    vectorize<BF16DefaultPolicy, BF16Pipeline<OpType::Mul>>(a, b, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(bf16) * 3;
   }
 
@@ -167,14 +179,17 @@ static void BM_BF16_Mul_ElementWise(benchmark::State& state) {
 static void BM_Int32_Mul_Scalar(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Int32DefaultPolicy> a(size);
+  column_vector<Int32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   const int32_t scalar = 7;
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a * scalar;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize_scalar bypasses operator overload overhead
+    vectorize_scalar<Int32DefaultPolicy, Int32ScalarPipeline<OpType::Mul>>(
+        a, scalar, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(int32_t) * 2; // 1 read + 1 write
   }
 
@@ -187,14 +202,17 @@ static void BM_Int32_Mul_Scalar(benchmark::State& state) {
 static void BM_Float32_Mul_Scalar(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Float32DefaultPolicy> a(size);
+  column_vector<Float32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   const float scalar = 2.5f;
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a * scalar;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize_scalar bypasses operator overload overhead
+    vectorize_scalar<Float32DefaultPolicy, Float32ScalarPipeline<OpType::Mul>>(
+        a, scalar, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(float) * 2;
   }
 
@@ -207,6 +225,8 @@ static void BM_Float32_Mul_Scalar(benchmark::State& state) {
 static void BM_Float32_FMA_Scalar(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Float32DefaultPolicy> a(size);
+  column_vector<Float32DefaultPolicy> temp(size);   // Pre-allocate temp
+  column_vector<Float32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   const float scale = 2.5f;
@@ -215,8 +235,13 @@ static void BM_Float32_FMA_Scalar(benchmark::State& state) {
   size_t bytes_processed = 0;
   for (auto _ : state) {
     // a * scale + offset (potential FMA candidate)
-    auto result = (a * scale) + offset;
-    benchmark::DoNotOptimize(result);
+    // Decomposed into two direct vectorize_scalar calls to avoid operator
+    // overhead
+    vectorize_scalar<Float32DefaultPolicy, Float32ScalarPipeline<OpType::Mul>>(
+        a, scale, temp);
+    vectorize_scalar<Float32DefaultPolicy, Float32ScalarPipeline<OpType::Add>>(
+        temp, offset, result);
+    benchmark::DoNotOptimize(result.data().data());
     // This does: read a, write temp, read temp, write result = 4x traffic
     // With fusion: read a, write result = 2x traffic
     bytes_processed += size * sizeof(float) * 4; // Unfused traffic
@@ -237,6 +262,8 @@ static void BM_Float32_ComplexUnfused(benchmark::State& state) {
   column_vector<Float32DefaultPolicy> a(size);
   column_vector<Float32DefaultPolicy> b(size);
   column_vector<Float32DefaultPolicy> c(size);
+  column_vector<Float32DefaultPolicy> temp(size);   // Pre-allocate temp
+  column_vector<Float32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
@@ -247,8 +274,10 @@ static void BM_Float32_ComplexUnfused(benchmark::State& state) {
     // (a + b) * c
     // Unfused: read a, read b, write temp1, read temp1, read c, write result =
     // 6x
-    auto result = (a + b) * c;
-    benchmark::DoNotOptimize(result);
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Add>>(a, b, temp);
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Mul>>(temp, c,
+                                                                  result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(float) * 6;
   }
 
@@ -267,17 +296,34 @@ static void BM_Float32_Polynomial(benchmark::State& state) {
 
   fill_random(x);
 
+  // Pre-allocate all intermediate buffers
+  column_vector<Float32DefaultPolicy> x2(size);
+  column_vector<Float32DefaultPolicy> x3(size);
+  column_vector<Float32DefaultPolicy> term1(size);
+  column_vector<Float32DefaultPolicy> term2(size);
+  column_vector<Float32DefaultPolicy> term3(size);
+  column_vector<Float32DefaultPolicy> temp_sum1(size);
+  column_vector<Float32DefaultPolicy> temp_sum2(size);
+  column_vector<Float32DefaultPolicy> result(size);
+
   size_t bytes_processed = 0;
   for (auto _ : state) {
     // Polynomial: x^3 + 2*x^2 + 3*x + 4
     // Without fusion: many intermediate allocations
-    auto x2 = x * x;
-    auto x3 = x2 * x;
-    auto term1 = x3;
-    auto term2 = x2 * 2.0f;
-    auto term3 = x * 3.0f;
-    auto result = ((term1 + term2) + term3) + 4.0f;
-    benchmark::DoNotOptimize(result);
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Mul>>(x, x, x2);
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Mul>>(x2, x, x3);
+    term1 = x3; // Direct assignment (bitset copy only)
+    vectorize_scalar<Float32DefaultPolicy, Float32ScalarPipeline<OpType::Mul>>(
+        x2, 2.0f, term2);
+    vectorize_scalar<Float32DefaultPolicy, Float32ScalarPipeline<OpType::Mul>>(
+        x, 3.0f, term3);
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Add>>(term1, term2,
+                                                                  temp_sum1);
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Add>>(
+        temp_sum1, term3, temp_sum2);
+    vectorize_scalar<Float32DefaultPolicy, Float32ScalarPipeline<OpType::Add>>(
+        temp_sum2, 4.0f, result);
+    benchmark::DoNotOptimize(result.data().data());
 
     // Actual memory traffic (very rough estimate)
     bytes_processed += size * sizeof(float) * 14; // Many intermediate writes
@@ -301,14 +347,16 @@ static void BM_Float32_Add_CacheEffects(benchmark::State& state) {
   const size_t size = state.range(0);
   column_vector<Float32DefaultPolicy> a(size);
   column_vector<Float32DefaultPolicy> b(size);
+  column_vector<Float32DefaultPolicy> result(size); // Pre-allocate output
 
   fill_random(a);
   fill_random(b);
 
   size_t bytes_processed = 0;
   for (auto _ : state) {
-    auto result = a + b;
-    benchmark::DoNotOptimize(result);
+    // Direct call to vectorize bypasses operator overload overhead
+    vectorize<Float32DefaultPolicy, Float32Pipeline<OpType::Add>>(a, b, result);
+    benchmark::DoNotOptimize(result.data().data());
     bytes_processed += size * sizeof(float) * 3;
   }
 

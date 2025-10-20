@@ -174,6 +174,16 @@ public:
   dynamic_bitset<BitsetPolicy>& present_mask() noexcept {
     return present_mask_;
   }
+
+  // Reduction operations - return identity value if empty or all missing
+  value_type sum() const;
+  value_type product() const;
+  value_type min() const;
+  value_type max() const;
+
+  // Present mask operations
+  bool any() const noexcept { return present_mask_.any(); }
+  bool all() const noexcept { return present_mask_.all(); }
 };
 
 // Default constructor with optional allocator
@@ -194,10 +204,11 @@ column_vector<Policy>::column_vector(std::size_t size,
       elements_per_cache_line;
 
   data_ = std::vector<value_type, allocator_type>(rounded_size, alloc);
-  present_mask_ = dynamic_bitset<BitsetPolicy>(rounded_size, true);
-  // Mark only the requested elements as present
-  for (std::size_t i = size; i < rounded_size; ++i) {
-    present_mask_.set(i, false);
+  // Create present_mask with all bits false, then set only valid elements to
+  // true This avoids issues with padding bits being set to true
+  present_mask_ = dynamic_bitset<BitsetPolicy>(rounded_size, false);
+  for (std::size_t i = 0; i < size; ++i) {
+    present_mask_.set(i, true);
   }
 }
 
@@ -214,10 +225,11 @@ column_vector<Policy>::column_vector(std::size_t size, const value_type& value,
       elements_per_cache_line;
 
   data_ = std::vector<value_type, allocator_type>(rounded_size, value, alloc);
-  present_mask_ = dynamic_bitset<BitsetPolicy>(rounded_size, true);
-  // Mark only the requested elements as present
-  for (std::size_t i = size; i < rounded_size; ++i) {
-    present_mask_.set(i, false);
+  // Create present_mask with all bits false, then set only valid elements to
+  // true This avoids issues with padding bits being set to true
+  present_mask_ = dynamic_bitset<BitsetPolicy>(rounded_size, false);
+  for (std::size_t i = 0; i < size; ++i) {
+    present_mask_.set(i, true);
   }
 }
 
@@ -507,27 +519,525 @@ inline void bitset_and_avx2(dynamic_bitset<BitsetPolicy>& dst,
   dst &= src;
 }
 
+// Reduction operation types
+enum class ReductionOp { Sum, Product, Min, Max };
+
+// Helper: Extract 8 bits from dynamic_bitset at given bit index
+inline uint8_t
+extract_8bits_from_bitset(const dynamic_bitset<BitsetPolicy>& bitset,
+                          std::size_t bit_index) {
+  // Get the block and bit position
+  std::size_t block_idx = bit_index / 64;
+  std::size_t bit_offset = bit_index % 64;
+
+  // Get the block containing these bits
+  uint64_t block = bitset.blocks()[block_idx];
+
+  // Extract 8 bits starting at bit_offset
+  uint8_t result = (block >> bit_offset) & 0xFF;
+
+  //// If bits span two blocks, get remaining bits from next block
+  // if (bit_offset > 56 && block_idx + 1 < bitset.blocks().size()) {
+  //   uint64_t next_block = bitset.blocks()[block_idx + 1];
+  //   uint8_t remaining_bits = 64 - bit_offset;
+  //   uint8_t next_bits = next_block & ((1 << (8 - remaining_bits)) - 1);
+  //   result |= (next_bits << remaining_bits);
+  // }
+
+  return result;
+}
+
+// Helper: Expand 8 bits to 8x 32-bit lane mask (0x00000000 or 0xFFFFFFFF per
+// lane) using pure SIMD operations, avoiding scalar loop and memory round-trip
+FRANKLIN_FORCE_INLINE __m256i expand_8bits_to_8x32bit_mask(uint8_t bits) {
+  // Broadcast the 8-bit value across all lanes
+  // We need to extract bit i for lane i (i in 0..7)
+  __m256i byte_broadcast = _mm256_set1_epi32((int32_t)bits);
+
+  // Create bit position indices for each lane: [0, 1, 2, 3, 4, 5, 6, 7]
+  // We'll use: srlv to shift right by lane index, then extract bit 0
+  const __m256i bit_positions = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+
+  // Shift right by bit_positions to get the bit we want in position 0
+  __m256i shifted = _mm256_srlv_epi32(byte_broadcast, bit_positions);
+
+  // Extract lowest bit: 1 or 0
+  __m256i bit_values = _mm256_and_si256(shifted, _mm256_set1_epi32(1));
+
+  // Expand bit to full mask: 1 -> -1 (all bits set), 0 -> 0
+  // cmpeq(bit_values, 1) gives 0xFFFFFFFF where bit is 1, else 0x00000000
+  return _mm256_cmpeq_epi32(bit_values, _mm256_set1_epi32(1));
+}
+
+// Horizontal sum for Int32
+FRANKLIN_FORCE_INLINE int32_t horizontal_sum_epi32(__m256i vec) {
+  // Hadd twice to get 4 sums, then extract and sum
+  __m256i sum1 =
+      _mm256_hadd_epi32(vec, vec); // [a+b, c+d, a+b, c+d, e+f, g+h, e+f, g+h]
+  __m256i sum2 = _mm256_hadd_epi32(sum1, sum1); // [a+b+c+d, ..., e+f+g+h, ...]
+
+  // Extract low and high 128-bit lanes
+  __m128i low = _mm256_castsi256_si128(sum2);
+  __m128i high = _mm256_extracti128_si256(sum2, 1);
+
+  // Add low and high lanes
+  __m128i sum = _mm_add_epi32(low, high);
+
+  // Extract final sum
+  return _mm_cvtsi128_si32(sum);
+}
+
+// Horizontal sum for Float32
+FRANKLIN_FORCE_INLINE float horizontal_sum_ps(__m256 vec) {
+  // Hadd twice
+  __m256 sum1 = _mm256_hadd_ps(vec, vec);
+  __m256 sum2 = _mm256_hadd_ps(sum1, sum1);
+
+  // Extract low and high lanes
+  __m128 low = _mm256_castps256_ps128(sum2);
+  __m128 high = _mm256_extractf128_ps(sum2, 1);
+
+  // Add and extract
+  __m128 sum = _mm_add_ps(low, high);
+  return _mm_cvtss_f32(sum);
+}
+
+// Horizontal min for Int32
+FRANKLIN_FORCE_INLINE int32_t horizontal_min_epi32(__m256i vec) {
+  // Use pairwise min operations
+  __m128i low = _mm256_castsi256_si128(vec);
+  __m128i high = _mm256_extracti128_si256(vec, 1);
+  __m128i min128 = _mm_min_epi32(low, high);
+
+  // Reduce 128-bit to scalar
+  __m128i min64 =
+      _mm_min_epi32(min128, _mm_shuffle_epi32(min128, _MM_SHUFFLE(1, 0, 3, 2)));
+  __m128i min32 =
+      _mm_min_epi32(min64, _mm_shuffle_epi32(min64, _MM_SHUFFLE(2, 3, 0, 1)));
+
+  return _mm_cvtsi128_si32(min32);
+}
+
+// Horizontal max for Int32
+FRANKLIN_FORCE_INLINE int32_t horizontal_max_epi32(__m256i vec) {
+  __m128i low = _mm256_castsi256_si128(vec);
+  __m128i high = _mm256_extracti128_si256(vec, 1);
+  __m128i max128 = _mm_max_epi32(low, high);
+
+  __m128i max64 =
+      _mm_max_epi32(max128, _mm_shuffle_epi32(max128, _MM_SHUFFLE(1, 0, 3, 2)));
+  __m128i max32 =
+      _mm_max_epi32(max64, _mm_shuffle_epi32(max64, _MM_SHUFFLE(2, 3, 0, 1)));
+
+  return _mm_cvtsi128_si32(max32);
+}
+
+// Horizontal min for Float32
+FRANKLIN_FORCE_INLINE float horizontal_min_ps(__m256 vec) {
+  __m128 low = _mm256_castps256_ps128(vec);
+  __m128 high = _mm256_extractf128_ps(vec, 1);
+  __m128 min128 = _mm_min_ps(low, high);
+
+  __m128 min64 = _mm_min_ps(
+      min128, _mm_shuffle_ps(min128, min128, _MM_SHUFFLE(1, 0, 3, 2)));
+  __m128 min32 =
+      _mm_min_ps(min64, _mm_shuffle_ps(min64, min64, _MM_SHUFFLE(2, 3, 0, 1)));
+
+  return _mm_cvtss_f32(min32);
+}
+
+// Horizontal max for Float32
+FRANKLIN_FORCE_INLINE float horizontal_max_ps(__m256 vec) {
+  __m128 low = _mm256_castps256_ps128(vec);
+  __m128 high = _mm256_extractf128_ps(vec, 1);
+  __m128 max128 = _mm_max_ps(low, high);
+
+  __m128 max64 = _mm_max_ps(
+      max128, _mm_shuffle_ps(max128, max128, _MM_SHUFFLE(1, 0, 3, 2)));
+  __m128 max32 =
+      _mm_max_ps(max64, _mm_shuffle_ps(max64, max64, _MM_SHUFFLE(2, 3, 0, 1)));
+
+  return _mm_cvtss_f32(max32);
+}
+
+// Int32 SIMD reduction
+template <ReductionOp Op>
+FRANKLIN_FORCE_INLINE int32_t
+reduce_int32(const int32_t* data, const dynamic_bitset<BitsetPolicy>& mask,
+             std::size_t num_elements) {
+  // Initialize accumulator with identity
+  int32_t identity;
+  if constexpr (Op == ReductionOp::Sum) {
+    identity = 0;
+  } else if constexpr (Op == ReductionOp::Product) {
+    identity = 1;
+  } else if constexpr (Op == ReductionOp::Min) {
+    identity = std::numeric_limits<int32_t>::max();
+  } else if constexpr (Op == ReductionOp::Max) {
+    identity = std::numeric_limits<int32_t>::lowest();
+  }
+
+  __m256i identity_vec = _mm256_set1_epi32(identity);
+  __m256i accumulator = identity_vec;
+
+  std::size_t i = 0;
+  const std::size_t num_full_vecs = num_elements / 8;
+
+  // Main loop: process 8 elements at a time with bitmask blending
+  for (std::size_t vec_idx = 0; vec_idx < num_full_vecs; ++vec_idx, i += 8) {
+    // Load 8 elements
+    __m256i data_vec =
+        _mm256_load_si256(reinterpret_cast<const __m256i*>(data + i));
+
+    // Extract 8 bits from present_mask
+    uint8_t mask_bits = extract_8bits_from_bitset(mask, i);
+
+    // Convert to SIMD mask
+    __m256i simd_mask = expand_8bits_to_8x32bit_mask(mask_bits);
+
+    // Blend: where mask==0, use identity; where mask==0xFFFFFFFF, use data
+    __m256i blended = _mm256_blendv_epi8(identity_vec, data_vec, simd_mask);
+
+    // Accumulate
+    if constexpr (Op == ReductionOp::Sum) {
+      accumulator = _mm256_add_epi32(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Product) {
+      accumulator = _mm256_mullo_epi32(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Min) {
+      accumulator = _mm256_min_epi32(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Max) {
+      accumulator = _mm256_max_epi32(accumulator, blended);
+    }
+  }
+
+  // Tail: handle remaining < 8 elements
+  if (i < num_elements) {
+    std::size_t tail_count = num_elements - i;
+
+    // Create mask for tail elements
+    alignas(32) int32_t tail_mask[8] = {0};
+    for (std::size_t j = 0; j < tail_count; ++j) {
+      if (mask[i + j]) {
+        tail_mask[j] = -1; // 0xFFFFFFFF
+      }
+    }
+    __m256i simd_tail_mask =
+        _mm256_load_si256(reinterpret_cast<const __m256i*>(tail_mask));
+
+    // Load tail data (may read past end, but we'll mask it out)
+    __m256i tail_data =
+        _mm256_load_si256(reinterpret_cast<const __m256i*>(data + i));
+    __m256i blended_tail =
+        _mm256_blendv_epi8(identity_vec, tail_data, simd_tail_mask);
+
+    // Accumulate tail
+    if constexpr (Op == ReductionOp::Sum) {
+      accumulator = _mm256_add_epi32(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Product) {
+      accumulator = _mm256_mullo_epi32(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Min) {
+      accumulator = _mm256_min_epi32(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Max) {
+      accumulator = _mm256_max_epi32(accumulator, blended_tail);
+    }
+  }
+
+  // Horizontal reduction
+  if constexpr (Op == ReductionOp::Sum) {
+    return horizontal_sum_epi32(accumulator);
+  } else if constexpr (Op == ReductionOp::Product) {
+    // For product, need to multiply all lanes
+    alignas(32) int32_t lanes[8];
+    _mm256_store_si256(reinterpret_cast<__m256i*>(lanes), accumulator);
+    int32_t result = 1;
+    for (int j = 0; j < 8; ++j) {
+      result *= lanes[j];
+    }
+    return result;
+  } else if constexpr (Op == ReductionOp::Min) {
+    return horizontal_min_epi32(accumulator);
+  } else if constexpr (Op == ReductionOp::Max) {
+    return horizontal_max_epi32(accumulator);
+  }
+}
+
+// Float32 SIMD reduction
+template <ReductionOp Op>
+FRANKLIN_FORCE_INLINE float
+reduce_float32(const float* data, const dynamic_bitset<BitsetPolicy>& mask,
+               std::size_t num_elements) {
+  // Initialize with identity
+  float identity;
+  if constexpr (Op == ReductionOp::Sum) {
+    identity = 0.0f;
+  } else if constexpr (Op == ReductionOp::Product) {
+    identity = 1.0f;
+  } else if constexpr (Op == ReductionOp::Min) {
+    identity = std::numeric_limits<float>::max();
+  } else if constexpr (Op == ReductionOp::Max) {
+    identity = std::numeric_limits<float>::lowest();
+  }
+
+  __m256 identity_vec = _mm256_set1_ps(identity);
+  __m256 accumulator = identity_vec;
+
+  std::size_t i = 0;
+  const std::size_t num_full_vecs = num_elements / 8;
+
+  // Main loop
+  for (std::size_t vec_idx = 0; vec_idx < num_full_vecs; ++vec_idx, i += 8) {
+    __m256 data_vec = _mm256_load_ps(data + i);
+
+    uint8_t mask_bits = extract_8bits_from_bitset(mask, i);
+    __m256i simd_mask_int = expand_8bits_to_8x32bit_mask(mask_bits);
+    __m256 simd_mask = _mm256_castsi256_ps(simd_mask_int);
+
+    __m256 blended = _mm256_blendv_ps(identity_vec, data_vec, simd_mask);
+
+    if constexpr (Op == ReductionOp::Sum) {
+      accumulator = _mm256_add_ps(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Product) {
+      accumulator = _mm256_mul_ps(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Min) {
+      accumulator = _mm256_min_ps(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Max) {
+      accumulator = _mm256_max_ps(accumulator, blended);
+    }
+  }
+
+  // Tail
+  if (i < num_elements) {
+    std::size_t tail_count = num_elements - i;
+    alignas(32) int32_t tail_mask[8] = {0};
+    for (std::size_t j = 0; j < tail_count; ++j) {
+      if (mask[i + j]) {
+        tail_mask[j] = -1;
+      }
+    }
+    __m256 simd_tail_mask = _mm256_castsi256_ps(
+        _mm256_load_si256(reinterpret_cast<const __m256i*>(tail_mask)));
+
+    __m256 tail_data = _mm256_load_ps(data + i);
+    __m256 blended_tail =
+        _mm256_blendv_ps(identity_vec, tail_data, simd_tail_mask);
+
+    if constexpr (Op == ReductionOp::Sum) {
+      accumulator = _mm256_add_ps(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Product) {
+      accumulator = _mm256_mul_ps(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Min) {
+      accumulator = _mm256_min_ps(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Max) {
+      accumulator = _mm256_max_ps(accumulator, blended_tail);
+    }
+  }
+
+  // Horizontal reduction
+  if constexpr (Op == ReductionOp::Sum) {
+    return horizontal_sum_ps(accumulator);
+  } else if constexpr (Op == ReductionOp::Product) {
+    alignas(32) float lanes[8];
+    _mm256_store_ps(lanes, accumulator);
+    float result = 1.0f;
+    for (int j = 0; j < 8; ++j) {
+      result *= lanes[j];
+    }
+    return result;
+  } else if constexpr (Op == ReductionOp::Min) {
+    return horizontal_min_ps(accumulator);
+  } else if constexpr (Op == ReductionOp::Max) {
+    return horizontal_max_ps(accumulator);
+  }
+}
+
+// BF16 SIMD reduction (converts to FP32 for computation)
+template <ReductionOp Op>
+FRANKLIN_FORCE_INLINE bf16 reduce_bf16(const bf16* data,
+                                       const dynamic_bitset<BitsetPolicy>& mask,
+                                       std::size_t num_elements) {
+  // Work in FP32 domain
+  float identity;
+  if constexpr (Op == ReductionOp::Sum) {
+    identity = 0.0f;
+  } else if constexpr (Op == ReductionOp::Product) {
+    identity = 1.0f;
+  } else if constexpr (Op == ReductionOp::Min) {
+    identity = std::numeric_limits<float>::max();
+  } else if constexpr (Op == ReductionOp::Max) {
+    identity = std::numeric_limits<float>::lowest();
+  }
+
+  __m256 identity_vec = _mm256_set1_ps(identity);
+  __m256 accumulator = identity_vec;
+
+  std::size_t i = 0;
+  const std::size_t num_full_vecs = num_elements / 8;
+
+  // Main loop
+  for (std::size_t vec_idx = 0; vec_idx < num_full_vecs; ++vec_idx, i += 8) {
+    // Load 8 bf16 values (16 bytes)
+    __m128i bf16_data =
+        _mm_load_si128(reinterpret_cast<const __m128i*>(data + i));
+
+    // Convert to FP32
+    __m256 fp32_data = _mm256_cvtpbh_ps(reinterpret_cast<__m128bh>(bf16_data));
+
+    // Get mask and blend
+    uint8_t mask_bits = extract_8bits_from_bitset(mask, i);
+    __m256i simd_mask_int = expand_8bits_to_8x32bit_mask(mask_bits);
+    __m256 simd_mask = _mm256_castsi256_ps(simd_mask_int);
+
+    __m256 blended = _mm256_blendv_ps(identity_vec, fp32_data, simd_mask);
+
+    if constexpr (Op == ReductionOp::Sum) {
+      accumulator = _mm256_add_ps(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Product) {
+      accumulator = _mm256_mul_ps(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Min) {
+      accumulator = _mm256_min_ps(accumulator, blended);
+    } else if constexpr (Op == ReductionOp::Max) {
+      accumulator = _mm256_max_ps(accumulator, blended);
+    }
+  }
+
+  // Tail
+  if (i < num_elements) {
+    std::size_t tail_count = num_elements - i;
+    alignas(32) int32_t tail_mask[8] = {0};
+    for (std::size_t j = 0; j < tail_count; ++j) {
+      if (mask[i + j]) {
+        tail_mask[j] = -1;
+      }
+    }
+    __m256 simd_tail_mask = _mm256_castsi256_ps(
+        _mm256_load_si256(reinterpret_cast<const __m256i*>(tail_mask)));
+
+    __m128i bf16_tail =
+        _mm_load_si128(reinterpret_cast<const __m128i*>(data + i));
+    __m256 fp32_tail = _mm256_cvtpbh_ps(reinterpret_cast<__m128bh>(bf16_tail));
+    __m256 blended_tail =
+        _mm256_blendv_ps(identity_vec, fp32_tail, simd_tail_mask);
+
+    if constexpr (Op == ReductionOp::Sum) {
+      accumulator = _mm256_add_ps(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Product) {
+      accumulator = _mm256_mul_ps(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Min) {
+      accumulator = _mm256_min_ps(accumulator, blended_tail);
+    } else if constexpr (Op == ReductionOp::Max) {
+      accumulator = _mm256_max_ps(accumulator, blended_tail);
+    }
+  }
+
+  // Horizontal reduction to scalar FP32
+  float fp32_result;
+  if constexpr (Op == ReductionOp::Sum) {
+    fp32_result = horizontal_sum_ps(accumulator);
+  } else if constexpr (Op == ReductionOp::Product) {
+    alignas(32) float lanes[8];
+    _mm256_store_ps(lanes, accumulator);
+    fp32_result = 1.0f;
+    for (int j = 0; j < 8; ++j) {
+      fp32_result *= lanes[j];
+    }
+  } else if constexpr (Op == ReductionOp::Min) {
+    fp32_result = horizontal_min_ps(accumulator);
+  } else if constexpr (Op == ReductionOp::Max) {
+    fp32_result = horizontal_max_ps(accumulator);
+  }
+
+  // Convert back to BF16
+  return bf16::from_float(fp32_result);
+}
+
 // Vectorized scalar operation: column op scalar
 template <concepts::ColumnPolicy ColPolicy, typename ScalarPipeline>
 static void vectorize_scalar(column_vector<ColPolicy> const& input,
                              typename ColPolicy::value_type scalar,
                              column_vector<ColPolicy>& output) {
   using value_type = typename ColPolicy::value_type;
-  const value_type* input_ptr = input.data().data();
-  value_type* output_ptr = output.data().data();
+  // OPTIMIZATION: Use __restrict__ to tell compiler pointers don't alias
+  const value_type* __restrict input_ptr = input.data().data();
+  value_type* __restrict output_ptr = output.data().data();
 
   std::size_t offset = 0;
   const std::size_t step = ScalarPipeline::elements_per_iteration;
   const std::size_t num_elements = output.data().size();
 
-  // Broadcast scalar to all lanes
+  // Broadcast scalar to all lanes ONCE outside the loop
   auto scalar_reg = ScalarPipeline::broadcast(scalar);
 
+  // OPTIMIZATION: Manual loop unrolling (4x) for instruction-level parallelism
+  const std::size_t unroll_step = step * 4;
+
+  while (offset + unroll_step <= num_elements) {
+    // Unroll 1
+    auto in1_storage = ScalarPipeline::load(input_ptr + offset);
+    typename ScalarPipeline::compute_register_type in1_compute;
+    if constexpr (std::is_same_v<value_type, bf16>) {
+      in1_compute = ScalarPipeline::transform_to(in1_storage);
+    } else {
+      in1_compute = in1_storage;
+    }
+    auto r1_compute = ScalarPipeline::op(in1_compute, scalar_reg);
+
+    // Unroll 2
+    auto in2_storage = ScalarPipeline::load(input_ptr + offset + step);
+    typename ScalarPipeline::compute_register_type in2_compute;
+    if constexpr (std::is_same_v<value_type, bf16>) {
+      in2_compute = ScalarPipeline::transform_to(in2_storage);
+    } else {
+      in2_compute = in2_storage;
+    }
+    auto r2_compute = ScalarPipeline::op(in2_compute, scalar_reg);
+
+    // Unroll 3
+    auto in3_storage = ScalarPipeline::load(input_ptr + offset + 2 * step);
+    typename ScalarPipeline::compute_register_type in3_compute;
+    if constexpr (std::is_same_v<value_type, bf16>) {
+      in3_compute = ScalarPipeline::transform_to(in3_storage);
+    } else {
+      in3_compute = in3_storage;
+    }
+    auto r3_compute = ScalarPipeline::op(in3_compute, scalar_reg);
+
+    // Unroll 4
+    auto in4_storage = ScalarPipeline::load(input_ptr + offset + 3 * step);
+    typename ScalarPipeline::compute_register_type in4_compute;
+    if constexpr (std::is_same_v<value_type, bf16>) {
+      in4_compute = ScalarPipeline::transform_to(in4_storage);
+    } else {
+      in4_compute = in4_storage;
+    }
+    auto r4_compute = ScalarPipeline::op(in4_compute, scalar_reg);
+
+    // Transform back and store (BF16 only)
+    typename ScalarPipeline::storage_register_type r1_storage, r2_storage,
+        r3_storage, r4_storage;
+    if constexpr (std::is_same_v<value_type, bf16>) {
+      r1_storage = ScalarPipeline::transform_from(r1_compute);
+      r2_storage = ScalarPipeline::transform_from(r2_compute);
+      r3_storage = ScalarPipeline::transform_from(r3_compute);
+      r4_storage = ScalarPipeline::transform_from(r4_compute);
+    } else {
+      r1_storage = r1_compute;
+      r2_storage = r2_compute;
+      r3_storage = r3_compute;
+      r4_storage = r4_compute;
+    }
+
+    ScalarPipeline::store(output_ptr + offset, r1_storage);
+    ScalarPipeline::store(output_ptr + offset + step, r2_storage);
+    ScalarPipeline::store(output_ptr + offset + 2 * step, r3_storage);
+    ScalarPipeline::store(output_ptr + offset + 3 * step, r4_storage);
+
+    offset += unroll_step;
+  }
+
+  // Handle remaining iterations
   while (offset + step <= num_elements) {
-    // Load column data
     auto input_storage = ScalarPipeline::load(input_ptr + offset);
 
-    // For BF16, need to transform to compute domain
     typename ScalarPipeline::compute_register_type input_compute;
     if constexpr (std::is_same_v<value_type, bf16>) {
       input_compute = ScalarPipeline::transform_to(input_storage);
@@ -535,10 +1045,8 @@ static void vectorize_scalar(column_vector<ColPolicy> const& input,
       input_compute = input_storage;
     }
 
-    // Perform operation
     auto result_compute = ScalarPipeline::op(input_compute, scalar_reg);
 
-    // For BF16, transform back to storage domain
     typename ScalarPipeline::storage_register_type result_storage;
     if constexpr (std::is_same_v<value_type, bf16>) {
       result_storage = ScalarPipeline::transform_from(result_compute);
@@ -546,7 +1054,6 @@ static void vectorize_scalar(column_vector<ColPolicy> const& input,
       result_storage = result_compute;
     }
 
-    // Store result
     ScalarPipeline::store(output_ptr + offset, result_storage);
 
     offset += step;
@@ -562,32 +1069,72 @@ static void vectorize(column_vector<ColPolicy> const& fst,
                       column_vector<ColPolicy>& out) {
 
   using value_type = typename ColPolicy::value_type;
-  const value_type* fst_ptr = fst.data().data();
-  const value_type* snd_ptr = snd.data().data();
-  value_type* out_ptr = out.data().data();
+  // OPTIMIZATION: Use __restrict__ to tell compiler pointers don't alias
+  // This enables aggressive load/store reordering and better pipelining
+  const value_type* __restrict fst_ptr = fst.data().data();
+  const value_type* __restrict snd_ptr = snd.data().data();
+  value_type* __restrict out_ptr = out.data().data();
 
   std::size_t offset = 0;
   const std::size_t step = Pipeline::elements_per_iteration;
   const std::size_t num_elements = out.data().size();
 
+  // OPTIMIZATION: Manual loop unrolling (4x) for instruction-level parallelism
+  // This creates 4 independent load->compute->store chains that can execute
+  // in parallel on modern out-of-order CPUs, reducing critical path latency
+  const std::size_t unroll_step = step * 4;
+
+  while (offset + unroll_step <= num_elements) {
+    // Unroll 1: Process elements [offset, offset+step)
+    auto a1_storage = Pipeline::load(fst_ptr + offset);
+    auto b1_storage = Pipeline::load(snd_ptr + offset);
+    auto a1_compute = Pipeline::transform_to(a1_storage);
+    auto b1_compute = Pipeline::transform_to(b1_storage);
+    auto r1_compute = Pipeline::op(a1_compute, b1_compute);
+    auto r1_storage = Pipeline::transform_from(r1_compute);
+
+    // Unroll 2: Process elements [offset+step, offset+2*step)
+    auto a2_storage = Pipeline::load(fst_ptr + offset + step);
+    auto b2_storage = Pipeline::load(snd_ptr + offset + step);
+    auto a2_compute = Pipeline::transform_to(a2_storage);
+    auto b2_compute = Pipeline::transform_to(b2_storage);
+    auto r2_compute = Pipeline::op(a2_compute, b2_compute);
+    auto r2_storage = Pipeline::transform_from(r2_compute);
+
+    // Unroll 3: Process elements [offset+2*step, offset+3*step)
+    auto a3_storage = Pipeline::load(fst_ptr + offset + 2 * step);
+    auto b3_storage = Pipeline::load(snd_ptr + offset + 2 * step);
+    auto a3_compute = Pipeline::transform_to(a3_storage);
+    auto b3_compute = Pipeline::transform_to(b3_storage);
+    auto r3_compute = Pipeline::op(a3_compute, b3_compute);
+    auto r3_storage = Pipeline::transform_from(r3_compute);
+
+    // Unroll 4: Process elements [offset+3*step, offset+4*step)
+    auto a4_storage = Pipeline::load(fst_ptr + offset + 3 * step);
+    auto b4_storage = Pipeline::load(snd_ptr + offset + 3 * step);
+    auto a4_compute = Pipeline::transform_to(a4_storage);
+    auto b4_compute = Pipeline::transform_to(b4_storage);
+    auto r4_compute = Pipeline::op(a4_compute, b4_compute);
+    auto r4_storage = Pipeline::transform_from(r4_compute);
+
+    // Store all results (can pipeline with loads from next iteration)
+    Pipeline::store(out_ptr + offset, r1_storage);
+    Pipeline::store(out_ptr + offset + step, r2_storage);
+    Pipeline::store(out_ptr + offset + 2 * step, r3_storage);
+    Pipeline::store(out_ptr + offset + 3 * step, r4_storage);
+
+    offset += unroll_step;
+  }
+
+  // Handle remaining iterations with single-iteration loop
   while (offset + step <= num_elements) {
-    // Load from memory
     auto a_storage = Pipeline::load(fst_ptr + offset);
     auto b_storage = Pipeline::load(snd_ptr + offset);
-
-    // Transform to compute domain (e.g., bf16 -> fp32)
     auto a_compute = Pipeline::transform_to(a_storage);
     auto b_compute = Pipeline::transform_to(b_storage);
-
-    // Perform operation in compute domain
     auto result_compute = Pipeline::op(a_compute, b_compute);
-
-    // Transform back to storage domain (e.g., bf16 -> fp32)
     auto result_storage = Pipeline::transform_from(result_compute);
-
-    // Store to memory
     Pipeline::store(out_ptr + offset, result_storage);
-
     offset += step;
   }
 
@@ -605,32 +1152,69 @@ static void vectorize_destructive(column_vector<ColPolicy>& mut,
                                   column_vector<ColPolicy> const& snd) {
 
   using value_type = typename ColPolicy::value_type;
-  value_type* mut_ptr = mut.data().data();
-  const value_type* snd_ptr = snd.data().data();
+  // OPTIMIZATION: Use __restrict__ for non-aliasing pointers
+  value_type* __restrict mut_ptr = mut.data().data();
+  const value_type* __restrict snd_ptr = snd.data().data();
 
   std::size_t offset = 0;
   const std::size_t step = Pipeline::elements_per_iteration;
   const std::size_t num_elements =
       std::min(mut.data().size(), snd.data().size());
 
+  // OPTIMIZATION: Manual loop unrolling (4x)
+  const std::size_t unroll_step = step * 4;
+
+  while (offset + unroll_step <= num_elements) {
+    // Unroll 1
+    auto a1_storage = Pipeline::load(mut_ptr + offset);
+    auto b1_storage = Pipeline::load(snd_ptr + offset);
+    auto a1_compute = Pipeline::transform_to(a1_storage);
+    auto b1_compute = Pipeline::transform_to(b1_storage);
+    auto r1_compute = Pipeline::op(a1_compute, b1_compute);
+    auto r1_storage = Pipeline::transform_from(r1_compute);
+
+    // Unroll 2
+    auto a2_storage = Pipeline::load(mut_ptr + offset + step);
+    auto b2_storage = Pipeline::load(snd_ptr + offset + step);
+    auto a2_compute = Pipeline::transform_to(a2_storage);
+    auto b2_compute = Pipeline::transform_to(b2_storage);
+    auto r2_compute = Pipeline::op(a2_compute, b2_compute);
+    auto r2_storage = Pipeline::transform_from(r2_compute);
+
+    // Unroll 3
+    auto a3_storage = Pipeline::load(mut_ptr + offset + 2 * step);
+    auto b3_storage = Pipeline::load(snd_ptr + offset + 2 * step);
+    auto a3_compute = Pipeline::transform_to(a3_storage);
+    auto b3_compute = Pipeline::transform_to(b3_storage);
+    auto r3_compute = Pipeline::op(a3_compute, b3_compute);
+    auto r3_storage = Pipeline::transform_from(r3_compute);
+
+    // Unroll 4
+    auto a4_storage = Pipeline::load(mut_ptr + offset + 3 * step);
+    auto b4_storage = Pipeline::load(snd_ptr + offset + 3 * step);
+    auto a4_compute = Pipeline::transform_to(a4_storage);
+    auto b4_compute = Pipeline::transform_to(b4_storage);
+    auto r4_compute = Pipeline::op(a4_compute, b4_compute);
+    auto r4_storage = Pipeline::transform_from(r4_compute);
+
+    // Store all results
+    Pipeline::store(mut_ptr + offset, r1_storage);
+    Pipeline::store(mut_ptr + offset + step, r2_storage);
+    Pipeline::store(mut_ptr + offset + 2 * step, r3_storage);
+    Pipeline::store(mut_ptr + offset + 3 * step, r4_storage);
+
+    offset += unroll_step;
+  }
+
+  // Handle remaining iterations
   while (offset + step <= num_elements) {
-    // Load from both sources
     auto a_storage = Pipeline::load(mut_ptr + offset);
     auto b_storage = Pipeline::load(snd_ptr + offset);
-
-    // Transform to compute domain (e.g., bf16 -> fp32)
     auto a_compute = Pipeline::transform_to(a_storage);
     auto b_compute = Pipeline::transform_to(b_storage);
-
-    // Perform operation in compute domain
     auto result_compute = Pipeline::op(a_compute, b_compute);
-
-    // Transform back to storage domain (e.g., fp32 -> bf16)
     auto result_storage = Pipeline::transform_from(result_compute);
-
-    // Store back to mut (reusing its buffer)
     Pipeline::store(mut_ptr + offset, result_storage);
-
     offset += step;
   }
 
@@ -972,6 +1556,71 @@ bool column_vector<Policy>::present_unchecked(
   FRANKLIN_DEBUG_ASSERT(index < present_mask_.size() &&
                         "present() index out of bounds");
   return present_mask_[index];
+}
+
+// Reduction operation implementations
+template <concepts::ColumnPolicy Policy>
+typename Policy::value_type column_vector<Policy>::sum() const {
+  if constexpr (std::is_same_v<value_type, std::int32_t>) {
+    return reduce_int32<ReductionOp::Sum>(data_.data(), present_mask_,
+                                          data_.size());
+  } else if constexpr (std::is_same_v<value_type, float>) {
+    return reduce_float32<ReductionOp::Sum>(data_.data(), present_mask_,
+                                            data_.size());
+  } else if constexpr (std::is_same_v<value_type, bf16>) {
+    return reduce_bf16<ReductionOp::Sum>(data_.data(), present_mask_,
+                                         data_.size());
+  } else {
+    static_assert(!std::is_same_v<int, int>, "Unsupported type for sum()");
+  }
+}
+
+template <concepts::ColumnPolicy Policy>
+typename Policy::value_type column_vector<Policy>::product() const {
+  if constexpr (std::is_same_v<value_type, std::int32_t>) {
+    return reduce_int32<ReductionOp::Product>(data_.data(), present_mask_,
+                                              data_.size());
+  } else if constexpr (std::is_same_v<value_type, float>) {
+    return reduce_float32<ReductionOp::Product>(data_.data(), present_mask_,
+                                                data_.size());
+  } else if constexpr (std::is_same_v<value_type, bf16>) {
+    return reduce_bf16<ReductionOp::Product>(data_.data(), present_mask_,
+                                             data_.size());
+  } else {
+    static_assert(!std::is_same_v<int, int>, "Unsupported type for product()");
+  }
+}
+
+template <concepts::ColumnPolicy Policy>
+typename Policy::value_type column_vector<Policy>::min() const {
+  if constexpr (std::is_same_v<value_type, std::int32_t>) {
+    return reduce_int32<ReductionOp::Min>(data_.data(), present_mask_,
+                                          data_.size());
+  } else if constexpr (std::is_same_v<value_type, float>) {
+    return reduce_float32<ReductionOp::Min>(data_.data(), present_mask_,
+                                            data_.size());
+  } else if constexpr (std::is_same_v<value_type, bf16>) {
+    return reduce_bf16<ReductionOp::Min>(data_.data(), present_mask_,
+                                         data_.size());
+  } else {
+    static_assert(!std::is_same_v<int, int>, "Unsupported type for min()");
+  }
+}
+
+template <concepts::ColumnPolicy Policy>
+typename Policy::value_type column_vector<Policy>::max() const {
+  if constexpr (std::is_same_v<value_type, std::int32_t>) {
+    return reduce_int32<ReductionOp::Max>(data_.data(), present_mask_,
+                                          data_.size());
+  } else if constexpr (std::is_same_v<value_type, float>) {
+    return reduce_float32<ReductionOp::Max>(data_.data(), present_mask_,
+                                            data_.size());
+  } else if constexpr (std::is_same_v<value_type, bf16>) {
+    return reduce_bf16<ReductionOp::Max>(data_.data(), present_mask_,
+                                         data_.size());
+  } else {
+    static_assert(!std::is_same_v<int, int>, "Unsupported type for max()");
+  }
 }
 
 } // namespace franklin
