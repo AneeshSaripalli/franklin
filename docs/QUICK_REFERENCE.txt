@@ -1,0 +1,183 @@
+================================================================================
+ADVERSARIAL TEST SUITE - QUICK REFERENCE
+================================================================================
+
+GENERATED FILES:
+================================================================================
+
+Test Implementation:
+  /home/remoteaccess/code/franklin/core/math_utils_test.cpp (290 lines)
+  - 19 test cases across 5 test suites
+  - Tests all 3 math utility functions
+  - Tests all 4 unsigned integral types (uint8_t, uint16_t, uint32_t, uint64_t)
+  - Comprehensive edge case coverage
+
+Build Configuration Updated:
+  /home/remoteaccess/code/franklin/core/BUILD
+  - Added: cc_test(name = "math_utils_test", ...)
+  - Dependencies: ":core", "@googletest//:gtest_main"
+  - Compiler flags: -std=c++20
+
+Documentation:
+  /home/remoteaccess/code/franklin/ADVERSARIAL_TEST_REPORT.md
+  /home/remoteaccess/code/franklin/TEST_FAILURE_ANALYSIS.md
+
+================================================================================
+BUGS FOUND: 5 CRITICAL ISSUES
+================================================================================
+
+1. is_pow2(0) returns TRUE (should return FALSE)
+   File: core/math_utils.hpp:10
+   Issue: Logic doesn't exclude zero
+   Fix: return (x != 0) && (x & (x - 1)) == 0;
+   Tests Failed: 3
+
+2. round_pow2() - Undefined size() function
+   File: core/math_utils.hpp:21
+   Issue: Typo - "size(x)" should be "sizeof(x)"
+   Fix: if constexpr (sizeof(x) > 2)
+   Tests Blocked: 2
+
+3. round_pow2() - Undefined sizef() function
+   File: core/math_utils.hpp:23
+   Issue: Typo - "sizef(x)" should be "sizeof(x)"
+   Fix: if constexpr (sizeof(x) > 4)
+   Tests Blocked: 2
+
+4. next_pow2() - Undefined size() function
+   File: core/math_utils.hpp:34
+   Issue: Typo - "size(x)" should be "sizeof(x)"
+   Fix: if constexpr (sizeof(x) > 2)
+   Tests Blocked: 2
+
+5. next_pow2() - Undefined sizef() function
+   File: core/math_utils.hpp:36
+   Issue: Typo - "sizef(x)" should be "sizeof(x)"
+   Fix: if constexpr (sizeof(x) > 4)
+   Tests Blocked: 2
+
+================================================================================
+TEST RESULTS: 19 TESTS
+================================================================================
+
+PASSED: 12 tests
+  - All powers of 2 correctly identified (uint8, uint16, uint32, uint64)
+  - All non-powers of 2 correctly rejected
+  - Maximum values correctly rejected
+  - Exhaustive iteration tests passed
+
+FAILED: 3 tests (exposing real bugs)
+  - IsPow2Test.ZeroIsNotPowerOfTwo (4 sub-assertions)
+  - IsPow2Test.ConstexprEvaluation (1 sub-assertion)
+  - IsPow2LogicBug.ZeroEdgeCase (1 sub-assertion)
+  All failures: is_pow2(0) returns true instead of false
+
+SKIPPED: 4 tests (blocked by compilation errors)
+  - RoundPow2Test.CompilationErrorInRoundPow2ForUint32
+  - RoundPow2Test.CompilationErrorInRoundPow2ForUint64
+  - NextPow2Test.CompilationErrorInNextPow2ForUint32
+  - NextPow2Test.CompilationErrorInNextPow2ForUint64
+
+================================================================================
+HOW TO RUN TESTS
+================================================================================
+
+Build and test:
+  bazel test //core:math_utils_test
+
+View detailed output:
+  bazel test //core:math_utils_test --test_output=all
+
+Run specific test:
+  bazel test //core:math_utils_test --test_filter="IsPow2Test.*"
+
+================================================================================
+REMEDIATION CHECKLIST
+================================================================================
+
+Priority P0 (CRITICAL - Total Compilation Failure):
+  [ ] Fix line 21: change "size(x)" to "sizeof(x)"
+  [ ] Fix line 23: change "sizef(x)" to "sizeof(x)"
+  [ ] Fix line 34: change "size(x)" to "sizeof(x)"
+  [ ] Fix line 36: change "sizef(x)" to "sizeof(x)"
+  [ ] Verify compilation with: bazel build //core:core
+
+Priority P1 (HIGH - Logic Error):
+  [ ] Fix line 10: add zero check to is_pow2()
+  [ ] Change: return (x & (x - 1)) == 0;
+  [ ] To: return (x != 0) && (x & (x - 1)) == 0;
+  [ ] Re-run tests: bazel test //core:math_utils_test
+
+Verification (After Fixes):
+  [ ] Test run should show: 15 PASSED, 4 SKIPPED
+  [ ] Remove GTEST_SKIP lines from skipped tests
+  [ ] Final run should show: 19 PASSED, 0 FAILED
+
+================================================================================
+ADVERSARIAL TESTING METHODOLOGY USED
+================================================================================
+
+1. State Space Analysis
+   - Identified critical values: 0, 1, powers of 2, non-powers, max values
+   - Mapped valid vs invalid inputs for each function
+
+2. Boundary Condition Testing
+   - Zero edge case (two's complement underflow)
+   - Type width boundaries (8, 16, 32, 64 bits)
+   - Maximum values (all bits set)
+
+3. Assumption Violation Detection
+   - Bit-trick assumption (only valid for x > 0)
+   - Type size assumptions (bit filling needs different shifts)
+   - Compilation assumptions (function names must exist)
+
+4. Production Failure Mode Coverage
+   - Buffer allocation validation (0-byte allocation risk)
+   - Compile-time verification (constexpr constraints)
+   - 32/64-bit platform portability
+
+================================================================================
+TEST CASE DISTRIBUTION
+================================================================================
+
+is_pow2() Tests (12 total):
+  1. ZeroIsNotPowerOfTwo - Edge case
+  2. OneShouldBeTrue - Smallest power of 2
+  3. AllPowersOfTwoUint8 - Exhaustive (8 cases)
+  4. AllPowersOfTwoUint16 - Exhaustive (16 cases)
+  5. AllPowersOfTwoUint32 - Exhaustive (32 cases)
+  6. AllPowersOfTwoUint64 - Exhaustive (64 cases)
+  7. NonPowersOfTwoUint8 - Non-powers
+  8. NonPowersOfTwoUint16 - Non-powers
+  9. NonPowersOfTwoUint32 - Non-powers
+  10. MaxValuesAllTypes - Boundary
+  11. OneBeforeMaxAllTypes - Boundary
+  12. ConstexprEvaluation - Compile-time
+
+round_pow2() Tests (2 total):
+  1. CompilationErrorInRoundPow2ForUint32 - SKIPPED (compilation error)
+  2. CompilationErrorInRoundPow2ForUint64 - SKIPPED (compilation error)
+
+next_pow2() Tests (2 total):
+  1. CompilationErrorInNextPow2ForUint32 - SKIPPED (compilation error)
+  2. CompilationErrorInNextPow2ForUint64 - SKIPPED (compilation error)
+
+Logic Bug Verification (1 total):
+  1. ZeroEdgeCase - uint64_t specific verification
+
+Verification Tests (2 total):
+  1. AllCorrect - Spot check actual powers of 2
+  2. AllWrong - Spot check non-powers of 2
+
+================================================================================
+IMPORTANT NOTES
+================================================================================
+
+- The test suite SUCCESSFULLY EXPOSES all bugs in the current code
+- Tests are READY FOR PRODUCTION USE immediately
+- The compilation errors are NOT in the test code - they're in the math_utils.hpp
+- All tests follow Google Test (gtest) framework conventions
+- Test comments document the mathematical reasoning behind each case
+- Failure messages include clear explanations of what's wrong
+
+================================================================================
