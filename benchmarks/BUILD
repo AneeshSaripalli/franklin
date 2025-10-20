@@ -161,3 +161,16 @@ cc_binary(
         "@google_benchmark//:benchmark",
     ],
 )
+
+cc_binary(
+    name = "cache_throughput_benchmark",
+    srcs = ["cache_throughput_benchmark.cpp"],
+    copts = [
+        "-std=c++20",
+        "-O3",
+        "-march=native",
+    ],
+    deps = [
+        "@google_benchmark//:benchmark",
+    ],
+)
