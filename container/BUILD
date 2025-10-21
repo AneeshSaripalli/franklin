@@ -125,3 +125,21 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "column_test_non_power_of_2",
+    srcs = ["column_test_non_power_of_2.cpp"],
+    copts = [
+        "-std=c++20",
+        "-mavx2",
+        "-mavx512f",
+        "-mavx512vl",
+        "-mavx512dq",
+        "-mavx512bf16",
+    ],
+    deps = [
+        ":container",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)
