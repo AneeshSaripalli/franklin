@@ -9,6 +9,7 @@ cc_library(
         "-mavx2",
         "-mavx512f",
         "-mavx512vl",
+        "-mavx512dq",
         "-mavx512vpopcntdq",
     ],
     visibility = ["//visibility:public"],
@@ -60,6 +61,7 @@ cc_test(
         "-mavx2",
         "-mavx512f",
         "-mavx512vl",
+        "-mavx512dq",
         "-mavx512bf16",
     ],
     deps = [

@@ -523,50 +523,16 @@ inline void bitset_and_avx2(dynamic_bitset<BitsetPolicy>& dst,
 enum class ReductionOp { Sum, Product, Min, Max };
 
 // Helper: Extract 8 bits from dynamic_bitset at given bit index
-inline uint8_t
+FRANKLIN_FORCE_INLINE std::uint8_t
 extract_8bits_from_bitset(const dynamic_bitset<BitsetPolicy>& bitset,
-                          std::size_t bit_index) {
-  // Get the block and bit position
-  std::size_t block_idx = bit_index / 64;
-  std::size_t bit_offset = bit_index % 64;
-
-  // Get the block containing these bits
-  uint64_t block = bitset.blocks()[block_idx];
-
-  // Extract 8 bits starting at bit_offset
-  uint8_t result = (block >> bit_offset) & 0xFF;
-
-  //// If bits span two blocks, get remaining bits from next block
-  // if (bit_offset > 56 && block_idx + 1 < bitset.blocks().size()) {
-  //   uint64_t next_block = bitset.blocks()[block_idx + 1];
-  //   uint8_t remaining_bits = 64 - bit_offset;
-  //   uint8_t next_bits = next_block & ((1 << (8 - remaining_bits)) - 1);
-  //   result |= (next_bits << remaining_bits);
-  // }
-
-  return result;
+                          std::size_t bit_index) noexcept {
+  std::size_t const block_idx = bit_index >> 6;
+  std::size_t const bit_offset = bit_index & 63;
+  return (bitset.blocks()[block_idx] >> bit_offset);
 }
 
-// Helper: Expand 8 bits to 8x 32-bit lane mask (0x00000000 or 0xFFFFFFFF per
-// lane) using pure SIMD operations, avoiding scalar loop and memory round-trip
 FRANKLIN_FORCE_INLINE __m256i expand_8bits_to_8x32bit_mask(uint8_t bits) {
-  // Broadcast the 8-bit value across all lanes
-  // We need to extract bit i for lane i (i in 0..7)
-  __m256i byte_broadcast = _mm256_set1_epi32((int32_t)bits);
-
-  // Create bit position indices for each lane: [0, 1, 2, 3, 4, 5, 6, 7]
-  // We'll use: srlv to shift right by lane index, then extract bit 0
-  const __m256i bit_positions = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
-
-  // Shift right by bit_positions to get the bit we want in position 0
-  __m256i shifted = _mm256_srlv_epi32(byte_broadcast, bit_positions);
-
-  // Extract lowest bit: 1 or 0
-  __m256i bit_values = _mm256_and_si256(shifted, _mm256_set1_epi32(1));
-
-  // Expand bit to full mask: 1 -> -1 (all bits set), 0 -> 0
-  // cmpeq(bit_values, 1) gives 0xFFFFFFFF where bit is 1, else 0x00000000
-  return _mm256_cmpeq_epi32(bit_values, _mm256_set1_epi32(1));
+  return _mm256_movm_epi32(bits);
 }
 
 // Horizontal sum for Int32
@@ -689,11 +655,10 @@ reduce_int32(const int32_t* data, const dynamic_bitset<BitsetPolicy>& mask,
     __m256i data_vec =
         _mm256_load_si256(reinterpret_cast<const __m256i*>(data + i));
 
-    // Extract 8 bits from present_mask
-    uint8_t mask_bits = extract_8bits_from_bitset(mask, i);
+    std::uint8_t const mask_bits = extract_8bits_from_bitset(mask, i);
 
     // Convert to SIMD mask
-    __m256i simd_mask = expand_8bits_to_8x32bit_mask(mask_bits);
+    auto const simd_mask = expand_8bits_to_8x32bit_mask(mask_bits);
 
     // Blend: where mask==0, use identity; where mask==0xFFFFFFFF, use data
     __m256i blended = _mm256_blendv_epi8(identity_vec, data_vec, simd_mask);
@@ -788,9 +753,9 @@ reduce_float32(const float* data, const dynamic_bitset<BitsetPolicy>& mask,
   for (std::size_t vec_idx = 0; vec_idx < num_full_vecs; ++vec_idx, i += 8) {
     __m256 data_vec = _mm256_load_ps(data + i);
 
-    uint8_t mask_bits = extract_8bits_from_bitset(mask, i);
-    __m256i simd_mask_int = expand_8bits_to_8x32bit_mask(mask_bits);
-    __m256 simd_mask = _mm256_castsi256_ps(simd_mask_int);
+    std::uint8_t const mask_bits = extract_8bits_from_bitset(mask, i);
+    auto const simd_mask =
+        _mm256_castsi256_ps(expand_8bits_to_8x32bit_mask(mask_bits));
 
     __m256 blended = _mm256_blendv_ps(identity_vec, data_vec, simd_mask);
 
@@ -883,9 +848,9 @@ FRANKLIN_FORCE_INLINE bf16 reduce_bf16(const bf16* data,
     __m256 fp32_data = _mm256_cvtpbh_ps(reinterpret_cast<__m128bh>(bf16_data));
 
     // Get mask and blend
-    uint8_t mask_bits = extract_8bits_from_bitset(mask, i);
-    __m256i simd_mask_int = expand_8bits_to_8x32bit_mask(mask_bits);
-    __m256 simd_mask = _mm256_castsi256_ps(simd_mask_int);
+    std::uint8_t const mask_bits = extract_8bits_from_bitset(mask, i);
+    auto const simd_mask =
+        _mm256_castsi256_ps(expand_8bits_to_8x32bit_mask(mask_bits));
 
     __m256 blended = _mm256_blendv_ps(identity_vec, fp32_data, simd_mask);
 
