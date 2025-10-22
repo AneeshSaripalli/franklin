@@ -4,6 +4,8 @@ common --enable_workspace
 # C++ settings
 build --cxxopt=-std=c++20
 build --host_cxxopt=-std=c++20
+build --copt=-march=native
+build --cxxopt=-march=native
 
 # Debug build configuration (-c dbg)
 build:dbg --copt=-O0
