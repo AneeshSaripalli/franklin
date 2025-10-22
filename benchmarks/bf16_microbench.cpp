@@ -11,7 +11,7 @@ static void BM_BF16_LoadStore_Only(benchmark::State& state) {
 
   // Fill with data
   for (size_t i = 0; i < size; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
   }
 
   size_t bytes_processed = 0;
@@ -35,7 +35,7 @@ static void BM_BF16_ConvertOnly(benchmark::State& state) {
   column_vector<BF16DefaultPolicy> result(size);
 
   for (size_t i = 0; i < size; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
   }
 
   size_t bytes_processed = 0;

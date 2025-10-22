@@ -183,8 +183,8 @@ TEST(ColumnAdversarial, BF16MultiplicationSize13Prime) {
   column_vector<BF16DefaultPolicy> b(13);
 
   for (size_t i = 0; i < 13; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
-    b.data()[i] = bf16::from_float(3.0f);
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 1));
+    b.data()[i] = bf16::from_float_trunc(3.0f);
   }
 
   auto result = a * b;
@@ -527,8 +527,8 @@ TEST(ColumnAdversarial, BF16Size31LoadAlignment) {
   column_vector<BF16DefaultPolicy> b(31);
 
   for (size_t i = 0; i < 31; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i));
-    b.data()[i] = bf16::from_float(static_cast<float>(i + 10));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
+    b.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 10));
   }
 
   auto result = a + b;

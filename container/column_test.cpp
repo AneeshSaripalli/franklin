@@ -510,7 +510,7 @@ TEST(ColumnVectorTest, BF16AdditionNegativeNumbers) {
 
 TEST(ColumnVectorTest, BF16AdditionSpecialValues) {
   // Test bf16 with special floating point values
-  BF16Column col_inf(16, bf16::from_float(INFINITY));
+  BF16Column col_inf(16, bf16::from_float_trunc(INFINITY));
   BF16Column col_normal(16, bf16(1.0f));
 
   // BF16Column result = col_inf + col_normal;
@@ -523,7 +523,7 @@ TEST(ColumnVectorTest, BF16AdditionSpecialValues) {
 TEST(ColumnVectorTest, BF16ConversionRoundTrip) {
   // Test that bf16 <-> float32 conversion works correctly
   float original = 3.14159f;
-  bf16 converted = bf16::from_float(original);
+  bf16 converted = bf16::from_float_trunc(original);
   float reconstructed = converted.to_float();
 
   // BF16 truncates, so we expect some precision loss
@@ -818,8 +818,8 @@ TEST(ColumnOperationsTest, BF16Addition) {
   column_vector<BF16DefaultPolicy> b(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i));
-    b.data()[i] = bf16::from_float(static_cast<float>(i * 2));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
+    b.data()[i] = bf16::from_float_trunc(static_cast<float>(i * 2));
   }
 
   auto result = a + b;
@@ -838,8 +838,8 @@ TEST(ColumnOperationsTest, BF16Subtraction) {
   column_vector<BF16DefaultPolicy> b(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i * 3));
-    b.data()[i] = bf16::from_float(static_cast<float>(i));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i * 3));
+    b.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
   }
 
   auto result = a - b;
@@ -858,8 +858,8 @@ TEST(ColumnOperationsTest, BF16Multiplication) {
   column_vector<BF16DefaultPolicy> b(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
-    b.data()[i] = bf16::from_float(2.0f);
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 1));
+    b.data()[i] = bf16::from_float_trunc(2.0f);
   }
 
   auto result = a * b;
@@ -951,8 +951,8 @@ TEST(ColumnOperationsTest, BF16BitmaskIntersection) {
 
   // Set up data
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i));
-    b.data()[i] = bf16::from_float(static_cast<float>(i + 10));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
+    b.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 10));
   }
 
   // Mark some values as missing
@@ -1056,8 +1056,8 @@ TEST(ColumnOperationsTest, LargeBF16Subtraction) {
   column_vector<BF16DefaultPolicy> b(size);
 
   for (size_t i = 0; i < size; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i) * 3.0f);
-    b.data()[i] = bf16::from_float(static_cast<float>(i));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i) * 3.0f);
+    b.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
   }
 
   auto result = a - b;
@@ -1236,10 +1236,10 @@ TEST(ScalarOperationsTest, BF16AddScalar) {
   column_vector<BF16DefaultPolicy> a(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
   }
 
-  auto result = a + bf16::from_float(5.0f);
+  auto result = a + bf16::from_float_trunc(5.0f);
 
   for (size_t i = 0; i < 16; ++i) {
     float expected = static_cast<float>(i) + 5.0f;
@@ -1253,10 +1253,10 @@ TEST(ScalarOperationsTest, BF16MultiplyScalar) {
   column_vector<BF16DefaultPolicy> a(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 1));
   }
 
-  auto result = a * bf16::from_float(2.0f);
+  auto result = a * bf16::from_float_trunc(2.0f);
 
   for (size_t i = 0; i < 16; ++i) {
     float expected = static_cast<float>(i + 1) * 2.0f;
@@ -1568,7 +1568,7 @@ TEST(ReductionOperationsTest, BF16Sum) {
   column_vector<BF16DefaultPolicy> a(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 1));
   }
 
   bf16 result = a.sum();
@@ -1579,10 +1579,10 @@ TEST(ReductionOperationsTest, BF16Sum) {
 TEST(ReductionOperationsTest, BF16Product) {
   column_vector<BF16DefaultPolicy> a(4);
 
-  a.data()[0] = bf16::from_float(2.0f);
-  a.data()[1] = bf16::from_float(3.0f);
-  a.data()[2] = bf16::from_float(1.5f);
-  a.data()[3] = bf16::from_float(2.0f);
+  a.data()[0] = bf16::from_float_trunc(2.0f);
+  a.data()[1] = bf16::from_float_trunc(3.0f);
+  a.data()[2] = bf16::from_float_trunc(1.5f);
+  a.data()[3] = bf16::from_float_trunc(2.0f);
 
   bf16 result = a.product();
   // 2 * 3 * 1.5 * 2 = 18
@@ -1593,7 +1593,7 @@ TEST(ReductionOperationsTest, BF16Min) {
   column_vector<BF16DefaultPolicy> a(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(100 - i));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(100 - i));
   }
 
   bf16 result = a.min();
@@ -1604,7 +1604,7 @@ TEST(ReductionOperationsTest, BF16Max) {
   column_vector<BF16DefaultPolicy> a(16);
 
   for (size_t i = 0; i < 16; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 1));
   }
 
   bf16 result = a.max();
@@ -1690,7 +1690,7 @@ TEST(ReductionOperationsTest, LargeBF16ProductIdentity) {
   column_vector<BF16DefaultPolicy> a(size);
 
   for (size_t i = 0; i < size; ++i) {
-    a.data()[i] = bf16::from_float(1.0f);
+    a.data()[i] = bf16::from_float_trunc(1.0f);
   }
 
   bf16 result = a.product();

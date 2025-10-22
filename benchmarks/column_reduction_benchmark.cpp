@@ -297,7 +297,7 @@ static void BM_BF16Sum_64K(benchmark::State& state) {
   std::mt19937 rng(42);
   std::uniform_real_distribution<float> dist(1.0f, 100.0f);
   for (size_t i = 0; i < size; ++i) {
-    col.data()[i] = bf16::from_float(dist(rng));
+    col.data()[i] = bf16::from_float_trunc(dist(rng));
   }
 
   for (auto _ : state) {
@@ -317,7 +317,7 @@ static void BM_BF16Sum_1M(benchmark::State& state) {
   std::mt19937 rng(42);
   std::uniform_real_distribution<float> dist(1.0f, 100.0f);
   for (size_t i = 0; i < size; ++i) {
-    col.data()[i] = bf16::from_float(dist(rng));
+    col.data()[i] = bf16::from_float_trunc(dist(rng));
   }
 
   for (auto _ : state) {
@@ -337,7 +337,7 @@ static void BM_BF16Product_64K(benchmark::State& state) {
   std::mt19937 rng(42);
   std::uniform_real_distribution<float> dist(0.95f, 1.05f);
   for (size_t i = 0; i < size; ++i) {
-    col.data()[i] = bf16::from_float(dist(rng));
+    col.data()[i] = bf16::from_float_trunc(dist(rng));
   }
 
   for (auto _ : state) {
@@ -357,7 +357,7 @@ static void BM_BF16Min_64K(benchmark::State& state) {
   std::mt19937 rng(42);
   std::uniform_real_distribution<float> dist(0.0f, 10000.0f);
   for (size_t i = 0; i < size; ++i) {
-    col.data()[i] = bf16::from_float(dist(rng));
+    col.data()[i] = bf16::from_float_trunc(dist(rng));
   }
 
   for (auto _ : state) {
@@ -377,7 +377,7 @@ static void BM_BF16Max_64K(benchmark::State& state) {
   std::mt19937 rng(42);
   std::uniform_real_distribution<float> dist(0.0f, 10000.0f);
   for (size_t i = 0; i < size; ++i) {
-    col.data()[i] = bf16::from_float(dist(rng));
+    col.data()[i] = bf16::from_float_trunc(dist(rng));
   }
 
   for (auto _ : state) {

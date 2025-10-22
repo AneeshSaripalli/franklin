@@ -12,8 +12,8 @@ static void BM_BF16_Add_NoBitmask(benchmark::State& state) {
 
   // Fill with data
   for (size_t i = 0; i < size; ++i) {
-    a.data()[i] = bf16::from_float(static_cast<float>(i));
-    b.data()[i] = bf16::from_float(static_cast<float>(i * 2));
+    a.data()[i] = bf16::from_float_trunc(static_cast<float>(i));
+    b.data()[i] = bf16::from_float_trunc(static_cast<float>(i * 2));
   }
 
   size_t bytes_processed = 0;

@@ -132,7 +132,7 @@ FranklinColumn* franklin_column_create(FranklinDataType type, size_t size,
     }
     case FRANKLIN_BF16: {
       auto* col = new column_vector<BF16Policy>(
-          size, bf16::from_float(static_cast<float>(value)));
+          size, bf16::from_float_trunc(static_cast<float>(value)));
       return reinterpret_cast<FranklinColumn*>(new FranklinColumnImpl(col));
     }
     default:

@@ -912,7 +912,7 @@ FRANKLIN_FORCE_INLINE bf16 reduce_bf16(const bf16* data,
   }
 
   // Convert back to BF16
-  return bf16::from_float(fp32_result);
+  return bf16::from_float_trunc(fp32_result);
 }
 
 // Vectorized scalar operation: column op scalar

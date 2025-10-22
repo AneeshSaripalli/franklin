@@ -441,7 +441,7 @@ TEST(NonPowerOf2ReductionTest, Size5BF16Sum) {
   BF16Column col(5);
   for (int i = 0; i < 5; ++i) {
     col.data()[i] =
-        bf16::from_float(static_cast<float>(i + 1)); // 1, 2, 3, 4, 5
+        bf16::from_float_trunc(static_cast<float>(i + 1)); // 1, 2, 3, 4, 5
   }
   // Expected: 15.0 (with BF16 precision tolerance)
   float result = col.sum().to_float();
@@ -450,11 +450,11 @@ TEST(NonPowerOf2ReductionTest, Size5BF16Sum) {
 
 TEST(NonPowerOf2ReductionTest, Size5BF16Product) {
   BF16Column col(5);
-  col.data()[0] = bf16::from_float(2.0f);
-  col.data()[1] = bf16::from_float(2.0f);
-  col.data()[2] = bf16::from_float(2.0f);
-  col.data()[3] = bf16::from_float(2.0f);
-  col.data()[4] = bf16::from_float(2.0f);
+  col.data()[0] = bf16::from_float_trunc(2.0f);
+  col.data()[1] = bf16::from_float_trunc(2.0f);
+  col.data()[2] = bf16::from_float_trunc(2.0f);
+  col.data()[3] = bf16::from_float_trunc(2.0f);
+  col.data()[4] = bf16::from_float_trunc(2.0f);
   // Expected: 2^5 = 32.0
   float result = col.product().to_float();
   EXPECT_NEAR(result, 32.0f, 1.0f) << "Size 5 BF16 product should be near 32.0";
@@ -463,7 +463,8 @@ TEST(NonPowerOf2ReductionTest, Size5BF16Product) {
 TEST(NonPowerOf2ReductionTest, Size9BF16Min) {
   BF16Column col(9);
   for (int i = 0; i < 9; ++i) {
-    col.data()[i] = bf16::from_float(static_cast<float>(i)); // 0, 1, 2, ..., 8
+    col.data()[i] =
+        bf16::from_float_trunc(static_cast<float>(i)); // 0, 1, 2, ..., 8
   }
   // Expected: 0.0
   float result = col.min().to_float();
@@ -473,7 +474,8 @@ TEST(NonPowerOf2ReductionTest, Size9BF16Min) {
 TEST(NonPowerOf2ReductionTest, Size9BF16Max) {
   BF16Column col(9);
   for (int i = 0; i < 9; ++i) {
-    col.data()[i] = bf16::from_float(static_cast<float>(i)); // 0, 1, 2, ..., 8
+    col.data()[i] =
+        bf16::from_float_trunc(static_cast<float>(i)); // 0, 1, 2, ..., 8
   }
   // Expected: 8.0
   float result = col.max().to_float();

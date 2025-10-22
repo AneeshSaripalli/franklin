@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cstdint>
+#include <utility>
 
 namespace franklin {
 
@@ -29,7 +30,7 @@ struct bf16 {
   }
 
   // Convert from float32 (truncation method)
-  static bf16 from_float(float value) noexcept {
+  static constexpr bf16 from_float_trunc(float value) noexcept {
     std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
 
     // BF16 is just the top 16 bits of float32
@@ -39,8 +40,24 @@ struct bf16 {
     return from_bits(bf16_bits);
   }
 
+  // Convert from float32 (truncation method)
+  static std::pair<bf16, bool> from_float(float value) noexcept {
+    std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
+
+    // BF16 is just the top 16 bits of float32
+    // Truncate (no rounding for now)
+    std::uint16_t bf16_bits = static_cast<std::uint16_t>(bits >> 16);
+
+    // If the bottom bits are 0s, then we can represent this float exactly as a
+    // bf16, else we've lost precision.
+    // This also implies (f == (bf16::from_float(f).to_bits()))
+    bool const exactly_represented = !(bits & (0xFFFF));
+
+    return {from_bits(bf16_bits), exactly_represented};
+  }
+
   // Convert to float32
-  float to_float() const noexcept {
+  constexpr float to_float() const noexcept {
     // BF16 to float32: shift left 16 bits and add zero lower bits
     std::uint32_t bits = static_cast<std::uint32_t>(to_bits()) << 16;
     return std::bit_cast<float>(bits);
@@ -50,7 +67,7 @@ struct bf16 {
   explicit operator float() const noexcept { return to_float(); }
 
   // Construct from float
-  explicit bf16(float value) noexcept : bf16(from_float(value)) {}
+  explicit bf16(float value) noexcept : bf16(from_float_trunc(value)) {}
 };
 
 static_assert(sizeof(bf16) == sizeof(std::uint16_t),

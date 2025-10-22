@@ -21,7 +21,7 @@ template <typename Policy> void fill_random(column_vector<Policy>& col) {
   } else if constexpr (std::is_same_v<typename Policy::value_type, bf16>) {
     std::uniform_real_distribution<float> dist(-1000.0f, 1000.0f);
     for (size_t i = 0; i < col.data().size(); ++i) {
-      col.data()[i] = bf16::from_float(dist(rng));
+      col.data()[i] = bf16::from_float_trunc(dist(rng));
     }
   }
 }

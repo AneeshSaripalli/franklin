@@ -88,56 +88,11 @@ class LiteralNode : public ExprNode {
 
 public:
   static std::variant<std::monostate, LiteralNode, errors::Errors>
-  parse_from_data(std::string_view data) noexcept {
-    errors::Errors errors{};
-
-    auto const underscores = std::count(data.begin(), data.end(), '_');
-    if (underscores != 1) [[unlikely]] {
-      if (underscores > 1) {
-        const auto second_underscore_index = std::distance(
-            data.begin(),
-            std::find(std::find(data.begin(), data.end(), '_') + 1, data.end(),
-                      '_'));
-        errors.error_list.emplace_back(
-            second_underscore_index,
-            fmt::format(
-                "Parsing literal {} with multiple underscores. Expected just "
-                "one underscore for the type marker after the literal. Found "
-                "{} "
-                "underscores, the second with index {}",
-                data, underscores, second_underscore_index));
-      } else {
-        errors.error_list.emplace_back(
-            0, fmt::format("Found no type marker when parsing data literal {}. "
-                           "Expected one, exactly, to denote the type marker.",
-                           data));
-      }
-      return errors; // Not attempting recovery here. That's a standard way of
-                     // providing more feedback to the user. Not attempting
-                     // that here/ right now.
-    }
-
-    auto const underscore_itr = std::find(data.begin(), data.end(), '_');
-    std::string_view const literal_data =
-        std::string_view{data.begin(), underscore_itr};
-    auto start_type_marker = underscore_itr;
-    std::advance(start_type_marker, 1.0);
-    std::string_view const type_marker =
-        std::string_view{start_type_marker, data.end()};
-
-    auto const type_marker_enum = parse_type_marker(type_marker);
-    if (type_marker_enum == DataTypeEnum::Unknown) [[unlikely]] {
-      errors.error_list.emplace_back(
-          std::distance(data.begin(), start_type_marker),
-          fmt::format("Expected valid type marker value, found {}",
-                      type_marker));
-      return errors;
-    }
-    return LiteralNode{literal_data, type_marker_enum};
-  }
+  parse_from_data(std::string_view data) noexcept;
 
   LiteralNode(std::string_view literal_sv, DataTypeEnum::Enum type) noexcept
       : literal_(literal_sv), type_(type) {}
+  virtual ~LiteralNode() = default;
 
   template <typename VisitorT> void visit(VisitorT&& visitor) const {
     switch (type_) {

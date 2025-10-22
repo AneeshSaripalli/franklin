@@ -205,8 +205,8 @@ TEST(EdgeCases, BF16CacheLineBoundaries) {
     column_vector<BF16DefaultPolicy> b(N);
 
     for (size_t i = 0; i < N; ++i) {
-      a.data()[i] = bf16::from_float(static_cast<float>(i + 1));
-      b.data()[i] = bf16::from_float(3.0f);
+      a.data()[i] = bf16::from_float_trunc(static_cast<float>(i + 1));
+      b.data()[i] = bf16::from_float_trunc(3.0f);
     }
 
     auto result = a * b;

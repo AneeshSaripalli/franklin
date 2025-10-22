@@ -48,21 +48,21 @@ TEST(BF16Test, FloatConversionSimpleValues) {
   // Test 1.0f
   // Float32: 0x3F800000 (0 | 01111111 | 00000000000000000000000)
   // BF16:    0x3F80     (0 | 01111111 | 0000000)
-  bf16 one = bf16::from_float(1.0f);
+  bf16 one = bf16::from_float_trunc(1.0f);
   EXPECT_EQ(one.to_bits(), 0x3F80);
   EXPECT_EQ(one.to_float(), 1.0f);
 
   // Test -1.0f
   // Float32: 0xBF800000 (1 | 01111111 | 00000000000000000000000)
   // BF16:    0xBF80     (1 | 01111111 | 0000000)
-  bf16 neg_one = bf16::from_float(-1.0f);
+  bf16 neg_one = bf16::from_float_trunc(-1.0f);
   EXPECT_EQ(neg_one.to_bits(), 0xBF80);
   EXPECT_EQ(neg_one.to_float(), -1.0f);
 
   // Test 2.0f
   // Float32: 0x40000000 (0 | 10000000 | 00000000000000000000000)
   // BF16:    0x4000     (0 | 10000000 | 0000000)
-  bf16 two = bf16::from_float(2.0f);
+  bf16 two = bf16::from_float_trunc(2.0f);
   EXPECT_EQ(two.to_bits(), 0x4000);
   EXPECT_EQ(two.to_float(), 2.0f);
 }
@@ -78,16 +78,16 @@ TEST(BF16Test, ConversionViaConstructor) {
 
 TEST(BF16Test, SpecialValues) {
   // Test infinity
-  bf16 pos_inf = bf16::from_float(INFINITY);
+  bf16 pos_inf = bf16::from_float_trunc(INFINITY);
   EXPECT_TRUE(std::isinf(pos_inf.to_float()));
   EXPECT_GT(pos_inf.to_float(), 0.0f);
 
-  bf16 neg_inf = bf16::from_float(-INFINITY);
+  bf16 neg_inf = bf16::from_float_trunc(-INFINITY);
   EXPECT_TRUE(std::isinf(neg_inf.to_float()));
   EXPECT_LT(neg_inf.to_float(), 0.0f);
 
   // Test NaN
-  bf16 nan_val = bf16::from_float(NAN);
+  bf16 nan_val = bf16::from_float_trunc(NAN);
   EXPECT_TRUE(std::isnan(nan_val.to_float()));
 }
 
