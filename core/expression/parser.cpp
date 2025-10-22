@@ -50,12 +50,30 @@ static bool validate_ok(std::string_view data, errors::Errors& errors) {
   return !errors.has_error();
 }
 
+struct ParserTokenState {
+  enum Enum {
+    UNDEF = 0,
+    LITERAL = 1,
+    COL_REF = 2,
+    BINARY_OP = 3,
+    ASSIGNMENT = 4
+  };
+};
+
 ParseResult parse(std::string_view data) {
   errors::Errors errors{};
   if (!validate_ok(data, errors)) [[unlikely]] {
     // report errors here../.
     return errors;
   }
+
+  // Stupid ass parsing idea - I think I can improve on this in the future.
+  // Find all clauses we know to be at depth 0 (root depth), then continue with
+  // greater subdepths using recursive subparsing.
+  // We stop recursing when we run across something of type COL_REF
+  for (auto i = 0; i < data.size(); ++i) {
+  }
+
   return nullptr;
 }
 
