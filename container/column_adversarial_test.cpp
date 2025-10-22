@@ -401,7 +401,10 @@ TEST(ColumnAdversarial, ConstructorRoundingInconsistency) {
 // ============================================================================
 
 TEST(ColumnAdversarial, DestructiveOpsMismatchedSizes) {
-  // A) TEST CODE
+  // Operations on columns with different sizes are NOT supported.
+  // The implementation now asserts when sizes don't match.
+  // This test verifies that the assertion fires correctly.
+
   column_vector<Int32DefaultPolicy> a(31); // Larger
   column_vector<Int32DefaultPolicy> b(13); // Smaller
 
@@ -412,21 +415,11 @@ TEST(ColumnAdversarial, DestructiveOpsMismatchedSizes) {
     b.data()[i] = static_cast<int32_t>(i * 2);
   }
 
-  // a + std::move(b) uses vectorize_destructive
-  auto result = a + std::move(b);
-
-  // Result should have min(31, 13) = 13 valid elements
-  // But actual computation may process more due to rounding
-
-  for (size_t i = 0; i < 13; ++i) {
-    int32_t expected = static_cast<int32_t>(i + i * 2);
-    int32_t actual = result.data()[i];
-    EXPECT_EQ(actual, expected) << "FAILURE at index " << i << ": expected "
-                                << expected << " but got " << actual << ". "
-                                << "vectorize_destructive at line 604 computes "
-                                   "min(data_.size(), snd.data_.size()) "
-                                << "but may process rounded sizes incorrectly!";
-  }
+  // a + std::move(b) should now assert due to size mismatch
+  EXPECT_DEATH(
+      { auto result = a + std::move(b); },
+      "Assertion failed.*present_mask_\\.size\\(\\) == "
+      "other\\.present_mask_\\.size\\(\\)");
 }
 
 // B) DIAGNOSIS

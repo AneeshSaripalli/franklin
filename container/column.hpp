@@ -1195,6 +1195,7 @@ static void vectorize_destructive(column_vector<ColPolicy>& mut,
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>
 column_vector<Policy>::operator+(const column_vector& other) const {
+  FRANKLIN_ASSERT(present_mask_.size() == other.present_mask_.size());
   if constexpr (std::is_same_v<value_type, std::int32_t>) {
     const auto effective_size =
         std::min<std::size_t>(data_.size(), other.data_.size());
@@ -1224,6 +1225,7 @@ column_vector<Policy>::operator+(const column_vector& other) const {
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>
 column_vector<Policy>::operator+(column_vector&& other) const {
+  FRANKLIN_ASSERT(present_mask_.size() == other.present_mask_.size());
   if constexpr (std::is_same_v<value_type, std::int32_t>) {
     vectorize_destructive<Policy, Int32Pipeline<OpType::Add>>(other, *this);
     return other;
@@ -1242,6 +1244,7 @@ column_vector<Policy>::operator+(column_vector&& other) const {
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>
 column_vector<Policy>::operator-(const column_vector& other) const {
+  FRANKLIN_ASSERT(present_mask_.size() == other.present_mask_.size());
   if constexpr (std::is_same_v<value_type, std::int32_t>) {
     const auto effective_size =
         std::min<std::size_t>(data_.size(), other.data_.size());
@@ -1271,6 +1274,7 @@ column_vector<Policy>::operator-(const column_vector& other) const {
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>
 column_vector<Policy>::operator-(column_vector&& other) const {
+  FRANKLIN_ASSERT(present_mask_.size() == other.present_mask_.size());
   // Subtraction is non-commutative, so we can't reuse the rvalue buffer
   // since vectorize_destructive(other, *this) would compute other - *this
   // but we need *this - other. Just allocate a new result.
@@ -1301,6 +1305,7 @@ column_vector<Policy>::operator-(column_vector&& other) const {
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>
 column_vector<Policy>::operator*(const column_vector& other) const {
+  FRANKLIN_ASSERT(present_mask_.size() == other.present_mask_.size());
   if constexpr (std::is_same_v<value_type, std::int32_t>) {
     const auto effective_size =
         std::min<std::size_t>(data_.size(), other.data_.size());
@@ -1330,6 +1335,7 @@ column_vector<Policy>::operator*(const column_vector& other) const {
 template <concepts::ColumnPolicy Policy>
 column_vector<Policy>
 column_vector<Policy>::operator*(column_vector&& other) const {
+  FRANKLIN_ASSERT(present_mask_.size() == other.present_mask_.size());
   if constexpr (std::is_same_v<value_type, std::int32_t>) {
     vectorize_destructive<Policy, Int32Pipeline<OpType::Mul>>(other, *this);
     return other;

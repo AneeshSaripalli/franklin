@@ -149,32 +149,41 @@ TEST(ColumnVectorTest, AdditionLargeVectors) {
 }
 
 // ============================================================================
-// Addition Tests - Different Sizes
+// Addition Tests - Different Sizes (NOT SUPPORTED - WILL ASSERT)
 // ============================================================================
 
 TEST(ColumnVectorTest, AdditionDifferentSizes) {
-  // Test addition of vectors with different sizes
-  // Expected behavior: result size is min(size1, size2)
+  // Operations on columns with different sizes are NOT supported.
+  // The implementation will FRANKLIN_ASSERT if sizes don't match.
+  // This test is disabled because the operation would abort.
 
-  Int32Column col1(32, 10); // 32 elements
-  Int32Column col2(16, 20); // 16 elements
+  // Int32Column col1(32, 10); // 32 elements
+  // Int32Column col2(16, 20); // 16 elements
+  // Int32Column result = col1 + col2; // This would assert!
 
-  // Int32Column result = col1 + col2;
-  // Expected: result should have 16 elements (the minimum)
-  // Each element should be 30
-
-  SUCCEED() << "Test disabled until addition implementation is fixed";
+  SUCCEED() << "Test disabled - operations require matching column sizes";
 }
 
 TEST(ColumnVectorTest, AdditionFirstSmallerThanSecond) {
-  Int32Column col1(16, 5);  // 16 elements
-  Int32Column col2(32, 10); // 32 elements
+  // Operations on columns with different sizes are NOT supported.
+  // The implementation will FRANKLIN_ASSERT if sizes don't match.
 
-  // Int32Column result = col1 + col2;
-  // Expected: result should have 16 elements
-  // Each element should be 15
+  // Int32Column col1(16, 5);  // 16 elements
+  // Int32Column col2(32, 10); // 32 elements
+  // Int32Column result = col1 + col2; // This would assert!
 
-  SUCCEED() << "Test disabled until addition implementation is fixed";
+  SUCCEED() << "Test disabled - operations require matching column sizes";
+}
+
+TEST(ColumnVectorTest, AdditionMismatchedSizesAsserts) {
+  // Verify that operations with mismatched sizes trigger assertion
+  Int32Column col1(32, 10);
+  Int32Column col2(16, 20);
+
+  EXPECT_DEATH(
+      { Int32Column result = col1 + col2; },
+      "Assertion failed.*present_mask_\\.size\\(\\) == "
+      "other\\.present_mask_\\.size\\(\\)");
 }
 
 // ============================================================================
@@ -321,15 +330,14 @@ TEST(ColumnVectorTest, AdditionRvalueVsLvalue) {
 }
 
 TEST(ColumnVectorTest, AdditionRvalueDifferentSizes) {
-  // Test rvalue overload with different sized vectors
-  Int32Column col1(32, 5);
-  Int32Column col2(16, 10);
+  // Operations on columns with different sizes are NOT supported.
+  // The implementation will FRANKLIN_ASSERT if sizes don't match.
 
-  // Int32Column result = col1 + std::move(col2);
-  // Expected: result has 16 elements (minimum size)
-  // Should reuse col2's buffer
+  // Int32Column col1(32, 5);
+  // Int32Column col2(16, 10);
+  // Int32Column result = col1 + std::move(col2); // This would assert!
 
-  SUCCEED() << "Test disabled until addition implementation is fixed";
+  SUCCEED() << "Test disabled - operations require matching column sizes";
 }
 
 // ============================================================================
