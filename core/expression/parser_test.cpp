@@ -83,5 +83,29 @@ TEST(ParserTest, LiteralValueParser) {
   }
 }
 
+TEST(ParserTest, OpPrecedence) {
+  {
+    const auto input_string = "a*b+c";
+    auto const parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+  }
+  {
+    const auto input_string = "(a*b+c)";
+    auto const parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+  }
+
+  {
+    const auto input_string = "a*(b+c)";
+    auto const parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+  }
+  {
+    const auto input_string = "(a*(b+c))";
+    auto const parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+  }
+}
+
 } // namespace
 } // namespace franklin::parser

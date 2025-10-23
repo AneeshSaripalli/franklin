@@ -45,18 +45,30 @@ struct BinaryOp {
 };
 
 class ASTNode {
-  virtual DataTypeEnum::Enum result() noexcept = 0;
+public:
+  virtual DataTypeEnum::Enum result() const noexcept = 0;
 };
 
 class ExprNode : public ASTNode {
-private:
-  DataTypeEnum result_;
+protected:
+  DataTypeEnum::Enum result_;
+
+public:
+  ExprNode() : result_(DataTypeEnum::Unknown) {}
+  ExprNode(DataTypeEnum::Enum result) : result_(result) {}
+  virtual ~ExprNode() = default;
+
+  virtual DataTypeEnum::Enum result() const noexcept override {
+    return result_;
+  }
 };
 
 class ColRef : public ExprNode {
   std::string col_name_;
 
 public:
+  ColRef(std::string col_name, DataTypeEnum::Enum result)
+      : ExprNode{result}, col_name_{col_name} {}
   auto name() const noexcept { return col_name_; }
 };
 
@@ -141,7 +153,7 @@ public:
     }
   }
 
-  virtual DataTypeEnum::Enum result() noexcept override { return type_; }
+  virtual DataTypeEnum::Enum result() const noexcept override { return type_; }
 };
 
 class BinaryOpNode : public ExprNode {
@@ -154,6 +166,11 @@ private:
   BinaryOp op_;
   std::unique_ptr<ExprNode> left_;
   std::unique_ptr<ExprNode> right_;
+
+public:
+  auto op() const noexcept { return op_; }
+  auto left() const noexcept { return left_.get(); }
+  auto right() const noexcept { return right_.get(); }
 };
 
 using ParseResult =
