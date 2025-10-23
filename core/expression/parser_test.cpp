@@ -86,8 +86,10 @@ TEST(ParserTest, LiteralValueParser) {
 TEST(ParserTest, OpPrecedence) {
   {
     const auto input_string = "a*b+c";
-    auto const parse_result = parse(input_string);
+    auto parse_result = parse(input_string);
     EXPECT_TRUE(parse_result_ok(parse_result));
+    auto const result = extract_result(std::move(parse_result));
+    std::cout << result->to_string() << std::endl;
   }
   {
     const auto input_string = "(a*b+c)";
@@ -102,6 +104,11 @@ TEST(ParserTest, OpPrecedence) {
   }
   {
     const auto input_string = "(a*(b+c))";
+    auto const parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+  }
+  {
+    const auto input_string = "(a * (    b +      c)  )";
     auto const parse_result = parse(input_string);
     EXPECT_TRUE(parse_result_ok(parse_result));
   }

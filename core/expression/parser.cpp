@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fmt/format.h>
+#include <iostream>
 #include <list>
 #include <variant>
 #include <vector>
@@ -67,25 +68,6 @@ static constexpr auto op_binding_power(char op) {
   return itr->second;
 }
 
-static std::string::size_type
-find_corresponding_close(std::string_view data, std::size_t opening_index) {
-  FRANKLIN_ASSERT(data[opening_index] == SCOPE_OPEN);
-
-  std::int32_t depth = 1;
-  auto i = opening_index + 1;
-  while (i < data.size()) {
-    depth +=
-        ((data[i] == SCOPE_OPEN) ? 1 : 0) + ((data[i] == SCOPE_CLOSE) ? -1 : 0);
-
-    if (depth < 0) [[unlikely]] {
-      return std::string::npos;
-    } else if (!depth) {
-      return i;
-    }
-  }
-  return std::string::npos;
-}
-
 ParseResult parse(std::string_view data) {
   errors::Errors errors{};
   if (!validate_ok(data, errors)) [[unlikely]] {
@@ -106,42 +88,21 @@ ParseResult parse(std::string_view data) {
   std::size_t index{};
   index = next_char(index);
 
-  std::vector<std::string> sexpr_st{};
+  std::vector<std::unique_ptr<ExprNode>> expr_st{};
   std::vector<std::pair<char, ::ssize_t>> op_st{};
 
-  [[maybe_unused]] auto print_stacks = [&]() {
-    std::cout << fmt::format("Sexpr stack:\t");
-    if (sexpr_st.size()) {
-      for (auto sexpr : sexpr_st) {
-        std::cout << fmt::format("({}), ", sexpr);
-      }
-      std::cout << std::endl;
-    }
-
-    std::cout << fmt::format("op stack:\t");
-    if (op_st.size()) {
-      for (auto const& op : op_st) {
-        std::cout << fmt::format("(op={}, index={}), ", op.first, op.second);
-      }
-      std::cout << std::endl;
-    }
-    std::cout << std::endl;
-  };
-
-  constexpr std::string_view SCOPE_OPEN_MARKER = "SCOPE_OPEN";
-
   auto apply_last_op = [&]() {
-    const auto last_op = op_st.back();
+    const auto [op_ch, op_index] = op_st.back();
     op_st.pop_back();
-    // While pre-empting, pop two off the operator stack, then push the
-    // combined result back onto the stack.
-    FRANKLIN_ASSERT(sexpr_st.size() >= 2);
-    auto first_sexpr = sexpr_st.back();
-    sexpr_st.pop_back();
-    auto second_sexpr = sexpr_st.back();
-    sexpr_st.pop_back();
-    sexpr_st.push_back(
-        fmt::format("({}) {} ({})", second_sexpr, last_op.first, first_sexpr));
+
+    FRANKLIN_ASSERT(expr_st.size() >= 2);
+    auto first_expr = std::move(expr_st.back());
+    expr_st.pop_back();
+    auto second_expr = std::move(expr_st.back());
+    expr_st.pop_back();
+    expr_st.push_back(std::make_unique<BinaryOpNode>(
+        BinaryOp::from_string(op_ch), std::move(second_expr),
+        std::move(first_expr)));
   };
 
   auto process_char = [&](std::size_t index, const char ch) {
@@ -173,34 +134,38 @@ ParseResult parse(std::string_view data) {
       op_st.emplace_back(ch, index);
     } else if (ch == SCOPE_OPEN) {
       op_st.emplace_back(SCOPE_OPEN, index);
-      sexpr_st.emplace_back(SCOPE_OPEN_MARKER);
+      expr_st.emplace_back(nullptr);
     } else if (ch == SCOPE_CLOSE) {
       // Note above that we collapse all decreasing prec binding ops, so our op
       // stack within our frame is in non-decreasing operation binding order.
-      while (op_st.back().first != SCOPE_OPEN) {
+      while (op_st.size() && (op_st.back().first != SCOPE_OPEN)) {
         apply_last_op();
       }
       // op stack is a dummy op
       op_st.pop_back();
-      // sexpr has an SCOPE_OPEN, then our frame-local collapsed value.
-      std::swap(sexpr_st[sexpr_st.size() - 2], sexpr_st.back());
-      sexpr_st.pop_back();
+
+      // expr has a nullptr, do the same
+      auto expr_st_head = std::move(*expr_st.rbegin());
+      expr_st.pop_back();
+      expr_st.pop_back();
+      expr_st.push_back(std::move(expr_st_head));
     } else {
-      sexpr_st.emplace_back(1, ch);
+      expr_st.emplace_back(
+          std::make_unique<ColRef>(std::string{1, ch}, DataTypeEnum::Unknown));
     }
   };
 
   while (index < data.size()) {
     process_char(index, data[index]);
-    ++index;
+    index = next_char(index + 1);
   }
   process_char(index + 1, '$');
-  FRANKLIN_ASSERT(sexpr_st.size() == 1);
+  FRANKLIN_ASSERT(expr_st.size() == 1);
   FRANKLIN_ASSERT(op_st.size() == 1);
   FRANKLIN_ASSERT(
       (op_st.back() == std::make_pair<char, ::ssize_t>('$', data.size() + 1)));
 
-  return nullptr;
+  return std::move(expr_st.front());
 }
 
 bool parse_result_ok(ParseResult const& parse_result) noexcept {
@@ -259,6 +224,10 @@ LiteralNode::parse_from_data(std::string_view data) noexcept {
     return errors;
   }
   return LiteralNode{literal_data, type_marker_enum};
+}
+
+std::unique_ptr<ASTNode> extract_result(ParseResult&& parse_result) {
+  return std::get<std::unique_ptr<ASTNode>>(std::move(parse_result));
 }
 
 } // namespace franklin::parser

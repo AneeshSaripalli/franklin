@@ -5,14 +5,12 @@
 #include "core/bf16.hpp"
 #include "core/compiler_macros.hpp"
 #include "core/data_type_enum.hpp"
-#include <algorithm>
 #include <charconv>
 #include <fmt/format.h>
-#include <iostream>
-#include <iterator>
 #include <limits>
 #include <list>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <variant>
 
@@ -42,11 +40,40 @@ struct BinaryOp {
     MUL = 3,
     UNKNOWN = std::numeric_limits<std::underlying_type_t<Enum>>::max()
   };
+
+  static constexpr BinaryOp::Enum from_string(char ch) noexcept {
+    switch (ch) {
+    case '+':
+      return Enum::ADD;
+    case '-':
+      return Enum::SUB;
+    case '*':
+      return Enum::MUL;
+    default:
+      return Enum::NONE;
+    }
+  }
+
+  constexpr static std::string_view to_string(Enum e) noexcept {
+    switch (e) {
+    case Enum::NONE:
+      return "NONE";
+    case Enum::ADD:
+      return "ADD";
+    case Enum::SUB:
+      return "SUB";
+    case Enum::MUL:
+      return "MUL";
+    default:
+      return "UNKNOWN";
+    }
+  }
 };
 
 class ASTNode {
 public:
   virtual DataTypeEnum::Enum result() const noexcept = 0;
+  virtual std::string to_string() const noexcept = 0;
 };
 
 class ExprNode : public ASTNode {
@@ -63,13 +90,17 @@ public:
   }
 };
 
-class ColRef : public ExprNode {
+class ColRef final : public ExprNode {
   std::string col_name_;
 
 public:
   ColRef(std::string col_name, DataTypeEnum::Enum result)
       : ExprNode{result}, col_name_{col_name} {}
   auto name() const noexcept { return col_name_; }
+
+  virtual std::string to_string() const noexcept override {
+    return fmt::format("ColRef(name={})", col_name_);
+  }
 };
 
 // Literals are ambigious. Literal expressions require both a value and a type
@@ -116,6 +147,7 @@ public:
           (ptr == literal_.data() + literal_.size()) && (ec == std::errc{});
       FRANKLIN_ASSERT(good_full_parse);
       visitor(value);
+      break;
     }
     case DataTypeEnum::Float32Default: {
       float value{};
@@ -125,6 +157,7 @@ public:
           (ptr == literal_.data() + literal_.size()) && (ec == std::errc{});
       FRANKLIN_ASSERT(good_full_parse);
       visitor(value);
+      break;
     }
     case DataTypeEnum::BF16Default: {
       float value{};
@@ -147,6 +180,7 @@ public:
       }
 
       visitor(bf16::from_float_trunc(value));
+      break;
     }
     default:
       break;
@@ -154,16 +188,21 @@ public:
   }
 
   virtual DataTypeEnum::Enum result() const noexcept override { return type_; }
+
+  virtual std::string to_string() const noexcept override {
+    return fmt::format("LiteralNode(literal={},type={})", literal_,
+                       DataTypeEnum::to_string(type_));
+  }
 };
 
 class BinaryOpNode : public ExprNode {
 public:
-  BinaryOpNode(BinaryOp op, std::unique_ptr<ExprNode> left,
+  BinaryOpNode(BinaryOp::Enum op, std::unique_ptr<ExprNode> left,
                std::unique_ptr<ExprNode> right)
       : op_(op), left_(std::move(left)), right_(std::move(right)) {}
 
 private:
-  BinaryOp op_;
+  BinaryOp::Enum op_;
   std::unique_ptr<ExprNode> left_;
   std::unique_ptr<ExprNode> right_;
 
@@ -171,6 +210,12 @@ public:
   auto op() const noexcept { return op_; }
   auto left() const noexcept { return left_.get(); }
   auto right() const noexcept { return right_.get(); }
+
+  virtual std::string to_string() const noexcept {
+    return fmt::format("BinaryOpNode(op={},left={},right={})",
+                       BinaryOp::to_string(op_), left_->to_string(),
+                       right_->to_string());
+  }
 };
 
 using ParseResult =
@@ -179,6 +224,7 @@ using ParseResult =
 ParseResult parse(std::string_view data);
 
 bool parse_result_ok(ParseResult const& parse_result) noexcept;
+std::unique_ptr<ASTNode> extract_result(ParseResult&& parse_result);
 errors::Errors
 parse_result_extract_errors(ParseResult const& parse_result) noexcept;
 
