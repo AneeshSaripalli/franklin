@@ -68,30 +68,13 @@ static constexpr auto op_binding_power(char op) {
   return itr->second;
 }
 
-ParseResult parse(std::string_view data) {
-  errors::Errors errors{};
-  if (!validate_ok(data, errors)) [[unlikely]] {
-    // report errors here../.
-    return errors;
-  }
-
-  auto next_char = [data](std::size_t pos) {
-    while (pos < data.size() && std::isspace(data[pos])) {
-      ++pos;
-    }
-    return pos;
-  };
-
-  // Group parsing - whenever we identify an operator, we can pop and group
-  // everything with binding precedence greater than the current operator.
-
-  std::size_t index{};
-  index = next_char(index);
-
+class Parser {
+  std::string_view data_;
   std::vector<std::unique_ptr<ExprNode>> expr_st{};
   std::vector<std::pair<char, ::ssize_t>> op_st{};
 
-  auto apply_last_op = [&]() {
+private:
+  void apply_last_op() noexcept {
     FRANKLIN_ASSERT(!op_st.empty());
     const auto [op_ch, op_index] = op_st.back();
     op_st.pop_back();
@@ -104,9 +87,19 @@ ParseResult parse(std::string_view data) {
     expr_st.push_back(std::make_unique<BinaryOpNode>(
         BinaryOp::from_string(op_ch), std::move(second_expr),
         std::move(first_expr)));
+  }
+
+  bool can_pop_opstack(char op) const noexcept {
+    if (!op_st.size()) {
+      return false;
+    }
+    const auto top = op_st.back();
+    return (top.first == SCOPE_OPEN && op == SCOPE_CLOSE) ||
+           (top.first != SCOPE_OPEN &&
+            op_binding_power(top.first) >= op_binding_power(op));
   };
 
-  auto process_char = [&](std::size_t index, const char ch) {
+  void process_char(std::size_t index, const char ch) {
     // May need to recursively subparse groups, defined by operator precedence
     // and parentheses.
     const auto is_operator =
@@ -115,16 +108,6 @@ ParseResult parse(std::string_view data) {
         std::end(operators);
 
     if (is_operator) {
-      auto const can_pop_opstack = [&op_st](char op) noexcept {
-        if (!op_st.size()) {
-          return false;
-        }
-        const auto top = op_st.back();
-        return (top.first == SCOPE_OPEN && op == SCOPE_CLOSE) ||
-               (top.first != SCOPE_OPEN &&
-                op_binding_power(top.first) >= op_binding_power(op));
-      };
-
       // Pop all operators will greater precendence, and that group
       // becomes an expression node.
       while (can_pop_opstack(ch)) {
@@ -168,17 +151,42 @@ ParseResult parse(std::string_view data) {
     }
   };
 
-  while (index < data.size()) {
-    process_char(index, data[index]);
-    index = next_char(index + 1);
-  }
-  process_char(index + 1, '$');
-  FRANKLIN_ASSERT(expr_st.size() == 1);
-  FRANKLIN_ASSERT(op_st.size() == 1);
-  FRANKLIN_ASSERT(
-      (op_st.back() == std::make_pair<char, ::ssize_t>('$', data.size() + 1)));
+public:
+  Parser(std::string_view data) noexcept : data_{data} {}
 
-  return std::move(expr_st.front());
+  ParseResult parse() {
+    errors::Errors errors{};
+    if (!validate_ok(data_, errors)) [[unlikely]] {
+      // report errors here../.
+      return errors;
+    }
+
+    auto next_char = [this](std::size_t pos) {
+      while (pos < data_.size() && std::isspace(data_[pos])) {
+        ++pos;
+      }
+      return pos;
+    };
+
+    std::size_t index{};
+    index = next_char(index);
+    while (index < data_.size()) {
+      process_char(index, data_[index]);
+      index = next_char(index + 1);
+    }
+    process_char(index + 1, '$');
+    FRANKLIN_ASSERT(expr_st.size() == 1);
+    FRANKLIN_ASSERT(op_st.size() == 1);
+    FRANKLIN_ASSERT((op_st.back() ==
+                     std::make_pair<char, ::ssize_t>('$', data_.size() + 1)));
+
+    return std::move(expr_st.front());
+  }
+};
+
+ParseResult parse(std::string_view data) {
+  Parser parser{data};
+  return parser.parse();
 }
 
 bool parse_result_ok(ParseResult const& parse_result) noexcept {
