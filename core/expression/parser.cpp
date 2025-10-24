@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 #include <iostream>
 #include <list>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -68,6 +69,17 @@ static constexpr auto op_binding_power(char op) {
   return itr->second;
 }
 
+static constexpr std::pair<bool, std::uint8_t>
+find_operator(const char ch) noexcept {
+  auto itr = std::find_if(std::begin(operators), std::end(operators),
+                          [ch](auto const& op) { return op.first == ch; });
+  if (itr == std::end(operators)) {
+    return {false, 0UL};
+  }
+
+  return {true, itr->second};
+}
+
 class Parser {
   std::string_view data_;
   std::vector<std::unique_ptr<ExprNode>> expr_st{};
@@ -99,60 +111,76 @@ private:
             op_binding_power(top.first) >= op_binding_power(op));
   };
 
-  void process_char(std::size_t index, const char ch) {
-    // May need to recursively subparse groups, defined by operator precedence
-    // and parentheses.
-    const auto is_operator =
-        std::find_if(std::begin(operators), std::end(operators),
-                     [ch](auto const& op) { return op.first == ch; }) !=
-        std::end(operators);
+  void enqueue_operator(std::size_t index, char ch) {
+    const auto [is_operator, op_binding_power] = find_operator(ch);
+    FRANKLIN_ASSERT_MSG(is_operator,
+                        "Operands to enqueue_operator must be an operator.");
 
-    if (is_operator) {
-      // Pop all operators will greater precendence, and that group
-      // becomes an expression node.
-      while (can_pop_opstack(ch)) {
-        apply_last_op();
-      }
-
-      // OK, now need to push this new operator into the stack.
-      op_st.emplace_back(ch, index);
-    } else if (ch == SCOPE_OPEN) {
-      op_st.emplace_back(SCOPE_OPEN, index);
-      expr_st.emplace_back(nullptr);
-    } else if (ch == SCOPE_CLOSE) {
-      // Note above that we collapse all decreasing prec binding ops, so our op
-      // stack within our frame is in non-decreasing operation binding order.
-      while (op_st.size() && (op_st.back().first != SCOPE_OPEN)) {
-        apply_last_op();
-      }
-      // op stack is a dummy op
-      FRANKLIN_ASSERT(!op_st.empty());
-      FRANKLIN_ASSERT(op_st.back().first == SCOPE_OPEN);
-      op_st.pop_back();
-
-      // expr has a nullptr sentinel, handle it
-      FRANKLIN_ASSERT(expr_st.size() >= 1);
-      if (expr_st.size() == 1) {
-        // Empty parentheses case: only sentinel present
-        FRANKLIN_ASSERT(expr_st.back() == nullptr);
-        // Keep the nullptr (represents empty expression)
-      } else {
-        // Normal case: sentinel + result
-        FRANKLIN_ASSERT(expr_st.size() >= 2);
-        FRANKLIN_ASSERT(expr_st[expr_st.size() - 2] == nullptr);
-        auto expr_st_head = std::move(*expr_st.rbegin());
-        expr_st.pop_back();
-        expr_st.pop_back();
-        expr_st.push_back(std::move(expr_st_head));
-      }
-    } else {
-      expr_st.emplace_back(
-          std::make_unique<ColRef>(std::string(1, ch), DataTypeEnum::Unknown));
+    // Pop all operators will greater precendence, and that group
+    // becomes an expression node.
+    while (can_pop_opstack(ch)) {
+      apply_last_op();
     }
-  };
+
+    // OK, now need to push this new operator into the stack.
+    op_st.emplace_back(ch, index);
+  }
+
+  void enqueue_sclose(std::size_t index, char ch) {
+    // Note above that we collapse all decreasing prec binding ops, so our op
+    // stack within our frame is in non-decreasing operation binding order.
+    while (op_st.size() && (op_st.back().first != SCOPE_OPEN)) {
+      apply_last_op();
+    }
+    // op stack is a dummy op
+    FRANKLIN_ASSERT(!op_st.empty());
+    FRANKLIN_ASSERT(op_st.back().first == SCOPE_OPEN);
+    op_st.pop_back();
+
+    // expr has a nullptr sentinel, handle it
+    FRANKLIN_ASSERT(expr_st.size() >= 1);
+    if (expr_st.size() == 1) {
+      // Empty parentheses case: only sentinel present
+      FRANKLIN_ASSERT(expr_st.back() == nullptr);
+      // Keep the nullptr (represents empty expression)
+    } else {
+      // Normal case: sentinel + result
+      FRANKLIN_ASSERT(expr_st.size() >= 2);
+      FRANKLIN_ASSERT(expr_st[expr_st.size() - 2] == nullptr);
+      auto expr_st_head = std::move(*expr_st.rbegin());
+      expr_st.pop_back();
+      expr_st.pop_back();
+      expr_st.push_back(std::move(expr_st_head));
+    }
+  }
+
+  void dump_stacks() {
+    // print op_stack in a single line
+    std::cout << "op_st: ";
+    for (const auto& op : op_st) {
+      std::cout << fmt::format("('{}', {})", op.first, op.second) << ", ";
+    }
+    std::cout << std::endl;
+    // print expr_st in a single line
+    std::cout << "expr_st: ";
+    for (const auto& expr : expr_st) {
+      if (expr == nullptr) {
+        std::cout << fmt::format("(SCOP), ");
+      } else {
+        std::cout << fmt::format("{}, ", expr->to_string());
+      }
+    }
+    std::cout << std::endl;
+  }
 
 public:
   Parser(std::string_view data) noexcept : data_{data} {}
+  ~Parser() = default;
+
+  FRANKLIN_FORCE_INLINE static constexpr bool
+  is_id_char(const char ch) noexcept {
+    return std::isalnum(ch) || ch == '_';
+  }
 
   ParseResult parse() {
     errors::Errors errors{};
@@ -161,20 +189,66 @@ public:
       return errors;
     }
 
-    auto next_char = [this](std::size_t pos) {
-      while (pos < data_.size() && std::isspace(data_[pos])) {
-        ++pos;
+    std::size_t index{};
+    std::optional<std::size_t> lex_start{std::nullopt};
+
+    auto const try_flush_lexeme = [&]() {
+      if (lex_start) {
+        std::string_view lexeme = data_.substr(*lex_start, index - *lex_start);
+        expr_st.push_back(std::make_unique<ColRef>(std::string{lexeme},
+                                                   DataTypeEnum::Unknown));
+        lex_start.reset();
       }
-      return pos;
     };
 
-    std::size_t index{};
-    index = next_char(index);
+    // Logic:
+    // If whitespace, end last lexeme
+    // If operator, reestablish non-decreasing operator priority
+    // If open/close paren, open or close the frame with expression collapse
     while (index < data_.size()) {
-      process_char(index, data_[index]);
-      index = next_char(index + 1);
+      const char ch = data_[index];
+
+      const auto [is_operator, op_binding_power] = find_operator(data_[index]);
+
+      if (is_id_char(ch)) {
+        if (!lex_start) {
+          lex_start = index;
+        } else {
+          // Else continue accumulating the lexeme from the original start
+          // position.
+          // Empty
+        }
+      } else {
+        try_flush_lexeme();
+
+        if (std::isspace(ch)) {
+          // Empty
+        } else if (ch == SCOPE_OPEN) {
+          op_st.emplace_back(SCOPE_OPEN, index);
+          expr_st.emplace_back(nullptr);
+        } else if (ch == SCOPE_CLOSE) {
+          enqueue_sclose(index, ch);
+        } else {
+          if (!is_operator) [[unlikely]] {
+            const auto err =
+                fmt::format("err: expected an operator, found {}", ch);
+            FRANKLIN_ASSERT_MSG(is_operator, err.c_str());
+          }
+          // Pop all operators will greater precendence, and that group
+          // becomes an expression node.
+          while (can_pop_opstack(ch)) {
+            apply_last_op();
+          }
+
+          // OK, now need to push this new operator into the stack.
+          op_st.emplace_back(ch, index);
+        }
+      }
+      ++index;
     }
-    process_char(index + 1, '$');
+
+    try_flush_lexeme();
+    enqueue_operator(index + 1, '$');
     FRANKLIN_ASSERT(expr_st.size() == 1);
     FRANKLIN_ASSERT(op_st.size() == 1);
     FRANKLIN_ASSERT((op_st.back() ==

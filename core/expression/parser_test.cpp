@@ -97,7 +97,6 @@ TEST(ParserTest, OpPrecedence) {
     auto const parse_result = parse(input_string);
     EXPECT_TRUE(parse_result_ok(parse_result));
   }
-
   {
     const auto input_string = "a*(b+c)";
     auto const parse_result = parse(input_string);
@@ -117,7 +116,15 @@ TEST(ParserTest, OpPrecedence) {
     const auto input_string = "(a * (    b +      c)  )";
     auto const parse_result = parse(input_string);
     EXPECT_TRUE(parse_result_ok(parse_result));
-
+    EXPECT_EQ(*extract_result(parse("(a * (    b +      c)  )")),
+              *extract_result(parse("a*(b+c)")));
+  }
+  {
+    const auto input_string = "(aaaa*(b+c))";
+    auto parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+    auto result = extract_result(std::move(parse_result));
+    std::cout << result->to_string() << std::endl;
     EXPECT_EQ(*extract_result(parse("(a * (    b +      c)  )")),
               *extract_result(parse("a*(b+c)")));
   }

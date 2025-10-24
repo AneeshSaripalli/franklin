@@ -30,6 +30,17 @@ namespace franklin {
   } while (0)
 #endif // FRANKLIN_ASSERT
 
+#ifndef FRANKLIN_ASSERT_MSG
+#define FRANKLIN_ASSERT_MSG(COND, MSG)                                         \
+  do {                                                                         \
+    if (!(COND)) {                                                             \
+      std::fprintf(stderr, "Assertion failed: %s, file %s, line %d\n", (MSG),  \
+                   __FILE__, __LINE__);                                        \
+      std::abort();                                                            \
+    }                                                                          \
+  } while (0)
+#endif // FRANKLIN_ASSERT_MSG
+
 #ifndef FRANKLIN_DEBUG_ASSERT
 #ifdef NDEBUG
 #define FRANKLIN_DEBUG_ASSERT(X) ((void)0)
