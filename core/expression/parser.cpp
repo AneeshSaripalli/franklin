@@ -182,7 +182,7 @@ ParseResult parse(std::string_view data) {
 }
 
 bool parse_result_ok(ParseResult const& parse_result) noexcept {
-  return std::holds_alternative<std::unique_ptr<ASTNode>>(parse_result);
+  return std::holds_alternative<std::unique_ptr<ExprNode>>(parse_result);
 }
 
 errors::Errors
@@ -239,8 +239,28 @@ LiteralNode::parse_from_data(std::string_view data) noexcept {
   return LiteralNode{literal_data, type_marker_enum};
 }
 
-std::unique_ptr<ASTNode> extract_result(ParseResult&& parse_result) {
-  return std::get<std::unique_ptr<ASTNode>>(std::move(parse_result));
+std::unique_ptr<ExprNode> extract_result(ParseResult&& parse_result) {
+  return std::get<std::unique_ptr<ExprNode>>(std::move(parse_result));
+}
+
+bool ExprNode::operator==(ExprNode const& other) const {
+  if (node_type() != other.node_type()) {
+    return false;
+  }
+
+  switch (node_type()) {
+  case ExprNodeType::LITERAL:
+    return *static_cast<LiteralNode const*>(&other) ==
+           *static_cast<LiteralNode const*>(this);
+  case ExprNodeType::COL_REF:
+    return *static_cast<ColRef const*>(&other) ==
+           *static_cast<ColRef const*>(this);
+  case ExprNodeType::BINARY_OP:
+    return *static_cast<BinaryOpNode const*>(&other) ==
+           *static_cast<BinaryOpNode const*>(this);
+  default:
+    return false;
+  }
 }
 
 } // namespace franklin::parser

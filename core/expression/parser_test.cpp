@@ -113,6 +113,14 @@ TEST(ParserTest, OpPrecedence) {
     auto const parse_result = parse(input_string);
     EXPECT_TRUE(parse_result_ok(parse_result));
   }
+  {
+    const auto input_string = "(a * (    b +      c)  )";
+    auto const parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+
+    EXPECT_EQ(*extract_result(parse("(a * (    b +      c)  )")),
+              *extract_result(parse("a*(b+c)")));
+  }
 }
 
 } // namespace

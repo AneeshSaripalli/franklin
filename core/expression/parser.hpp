@@ -70,14 +70,31 @@ struct BinaryOp {
   }
 };
 
-class ASTNode {
-public:
-  virtual DataTypeEnum::Enum result() const noexcept = 0;
-  virtual std::string to_string() const noexcept = 0;
-  virtual std::string enriched_representation() const noexcept = 0;
+struct ExprNodeType {
+  enum Enum : std::uint16_t {
+    NONE = 0,
+    LITERAL = 1,
+    COL_REF = 2,
+    BINARY_OP = 3
+  };
+
+  static constexpr std::string_view to_string(Enum e) noexcept {
+    switch (e) {
+    case Enum::NONE:
+      return "NONE";
+    case Enum::LITERAL:
+      return "LITERAL";
+    case Enum::COL_REF:
+      return "COL_REF";
+    case Enum::BINARY_OP:
+      return "BINARY_OP";
+    default:
+      return "UNKNOWN";
+    }
+  }
 };
 
-class ExprNode : public ASTNode {
+class ExprNode {
 protected:
   DataTypeEnum::Enum result_;
 
@@ -86,9 +103,13 @@ public:
   ExprNode(DataTypeEnum::Enum result) : result_(result) {}
   virtual ~ExprNode() = default;
 
-  virtual DataTypeEnum::Enum result() const noexcept override {
-    return result_;
-  }
+  virtual DataTypeEnum::Enum result() const noexcept { return result_; }
+
+  virtual std::string to_string() const noexcept = 0;
+  virtual std::string enriched_representation() const noexcept = 0;
+  virtual ExprNodeType::Enum node_type() const noexcept = 0;
+
+  bool operator==(ExprNode const& other) const;
 };
 
 class ColRef final : public ExprNode {
@@ -101,6 +122,14 @@ public:
 
   virtual std::string to_string() const noexcept override {
     return fmt::format("({})", col_name_);
+  }
+
+  virtual bool operator==(ColRef const& ref) const noexcept {
+    return col_name_ == ref.col_name_;
+  }
+
+  virtual ExprNodeType::Enum node_type() const noexcept override {
+    return ExprNodeType::COL_REF;
   }
 
   virtual std::string enriched_representation() const noexcept override {
@@ -198,6 +227,14 @@ public:
     return fmt::format("({})", literal_);
   }
 
+  virtual ExprNodeType::Enum node_type() const noexcept override {
+    return ExprNodeType::LITERAL;
+  }
+
+  virtual bool operator==(LiteralNode const& other) const noexcept {
+    return std::tie(literal_, type_) == std::tie(other.literal_, other.type_);
+  }
+
   virtual std::string enriched_representation() const noexcept override {
     return fmt::format("LiteralNode(literal={},type={})", literal_,
                        DataTypeEnum::to_string(type_));
@@ -220,6 +257,11 @@ public:
   auto left() const noexcept { return left_.get(); }
   auto right() const noexcept { return right_.get(); }
 
+  virtual bool operator==(BinaryOpNode const& other) const noexcept {
+    return op_ == other.op_ && *left_ == *other.left_ &&
+           *right_ == *other.right_;
+  }
+
   virtual std::string to_string() const noexcept {
     char op_char;
     switch (op_) {
@@ -240,6 +282,10 @@ public:
                        right_->to_string());
   }
 
+  virtual ExprNodeType::Enum node_type() const noexcept override {
+    return ExprNodeType::BINARY_OP;
+  }
+
   virtual std::string enriched_representation() const noexcept {
     return fmt::format(
         "BinaryOpNode(op={},left={},right={})", BinaryOp::to_string(op_),
@@ -248,12 +294,12 @@ public:
 };
 
 using ParseResult =
-    std::variant<std::monostate, std::unique_ptr<ASTNode>, errors::Errors>;
+    std::variant<std::monostate, std::unique_ptr<ExprNode>, errors::Errors>;
 
 ParseResult parse(std::string_view data);
 
 bool parse_result_ok(ParseResult const& parse_result) noexcept;
-std::unique_ptr<ASTNode> extract_result(ParseResult&& parse_result);
+std::unique_ptr<ExprNode> extract_result(ParseResult&& parse_result);
 errors::Errors
 parse_result_extract_errors(ParseResult const& parse_result) noexcept;
 

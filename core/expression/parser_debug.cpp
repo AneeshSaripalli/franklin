@@ -6,12 +6,6 @@
 
 namespace franklin::parser {
 
-std::ostream& operator<<(std::ostream& os, ASTNode const& node) {
-  os << fmt::format("ASTNode(output={})",
-                    DataTypeEnum::to_string(node.result()));
-  return os;
-}
-
 std::ostream& operator<<(std::ostream& os, ExprNode const& node) {
   os << fmt::format("ExprNode(output={})",
                     DataTypeEnum::to_string(node.result()));

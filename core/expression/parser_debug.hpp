@@ -6,11 +6,9 @@
 
 namespace franklin::parser {
 
-class ASTNode;
 class ExprNode;
 class ColRef;
 
-std::ostream& operator<<(std::ostream& os, ASTNode const& node);
 std::ostream& operator<<(std::ostream& os, ExprNode const& node);
 std::ostream& operator<<(std::ostream& os, ColRef const& node);
 
