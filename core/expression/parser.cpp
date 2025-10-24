@@ -1,5 +1,6 @@
 #include "core/expression/parser.hpp"
 #include "core/compiler_macros.hpp"
+#include "core/data_type_enum.hpp"
 #include <algorithm>
 #include <cctype>
 #include <fmt/format.h>
@@ -182,6 +183,57 @@ public:
     return std::isalnum(ch) || ch == '_';
   }
 
+  static bool is_literal(std::string_view lexeme) noexcept {
+    const auto underscore_pos = lexeme.find('_');
+    if (underscore_pos == std::string::npos)
+      return false;
+
+    const bool has_valid_type_suffix = lexeme.ends_with("_i32") ||
+                                       lexeme.ends_with("_f32") ||
+                                       lexeme.ends_with("_bf16");
+    if (!has_valid_type_suffix)
+      return false;
+    for (auto i = 0UL; i < underscore_pos; ++i) {
+      if (!std::isdigit(lexeme[i]))
+        return false;
+    }
+    return true;
+  }
+
+  static bool is_col_ref(std::string_view lexeme) noexcept {
+    bool const starts_with_alpha = std::isalpha(lexeme.front());
+    bool const all_alphanum_or_underscores =
+        std::all_of(lexeme.begin(), lexeme.end(), [](const char ch) {
+          return std::isalnum(ch) || (ch == '_');
+        });
+    return starts_with_alpha && all_alphanum_or_underscores;
+  }
+
+  static ExprNodeType::Enum classify(std::string_view lexeme,
+                                     errors::Errors& errors) noexcept {
+    // std::cout << fmt::format("Lexeme is {}", lexeme) << std::endl;
+    bool const can_be_literal = is_literal(lexeme);
+    bool const can_be_col_ref = is_col_ref(lexeme);
+
+    // std::cout << fmt::format("Can be literal = {}, can be col ref = {}",
+    //                          can_be_literal, can_be_col_ref)
+    //           << std::endl;
+
+    if (can_be_col_ref && can_be_literal) {
+      errors.error_list.emplace_back(
+          0UL, fmt::format("Lexeme satisfies multiple types. Ambigious."));
+      return ExprNodeType::NONE;
+    } else if (can_be_col_ref) {
+      return ExprNodeType::COL_REF;
+    } else if (can_be_literal) {
+      return ExprNodeType::LITERAL;
+    } else {
+      errors.error_list.emplace_back(
+          0UL, fmt::format("Lexeme satisfies no type constraints."));
+      return ExprNodeType::NONE;
+    }
+  }
+
   ParseResult parse() {
     errors::Errors errors{};
     if (!validate_ok(data_, errors)) [[unlikely]] {
@@ -195,8 +247,28 @@ public:
     auto const try_flush_lexeme = [&]() {
       if (lex_start) {
         std::string_view lexeme = data_.substr(*lex_start, index - *lex_start);
-        expr_st.push_back(std::make_unique<ColRef>(std::string{lexeme},
-                                                   DataTypeEnum::Unknown));
+        const auto classification = classify(lexeme, errors);
+        // std::cout << fmt::format("Flushed lexeme and got classification of
+        // {}",
+        //                          ExprNodeType::to_string(classification))
+        //           << std::endl;
+        switch (classification) {
+        case ExprNodeType::LITERAL: {
+          auto literal_result = LiteralNode::parse_from_data(lexeme);
+          FRANKLIN_ASSERT(std::holds_alternative<LiteralNode>(literal_result));
+          expr_st.push_back(std::make_unique<LiteralNode>(
+              std::get<LiteralNode>(std::move(literal_result))));
+          break;
+        }
+        case ExprNodeType::COL_REF: {
+          expr_st.push_back(std::make_unique<ColRef>(std::string{lexeme},
+                                                     DataTypeEnum::Unknown));
+          break;
+        }
+        default: {
+          break;
+        }
+        }
         lex_start.reset();
       }
     };
@@ -253,6 +325,10 @@ public:
     FRANKLIN_ASSERT(op_st.size() == 1);
     FRANKLIN_ASSERT((op_st.back() ==
                      std::make_pair<char, ::ssize_t>('$', data_.size() + 1)));
+
+    if (errors.has_error()) {
+      return errors;
+    }
 
     return std::move(expr_st.front());
   }

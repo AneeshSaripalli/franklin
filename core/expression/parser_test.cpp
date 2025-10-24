@@ -128,6 +128,13 @@ TEST(ParserTest, OpPrecedence) {
     EXPECT_EQ(*extract_result(parse("(a * (    b +      c)  )")),
               *extract_result(parse("a*(b+c)")));
   }
+  {
+    const auto input_string = "(aaaa*(b+c+217_i32))";
+    auto parse_result = parse(input_string);
+    EXPECT_TRUE(parse_result_ok(parse_result));
+    auto result = extract_result(std::move(parse_result));
+    std::cout << result->to_string() << std::endl;
+  }
 }
 
 } // namespace

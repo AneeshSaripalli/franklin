@@ -224,7 +224,8 @@ public:
   virtual DataTypeEnum::Enum result() const noexcept override { return type_; }
 
   virtual std::string to_string() const noexcept override {
-    return fmt::format("({})", literal_);
+    return fmt::format("({} : {})", literal_.substr(0, literal_.find('_')),
+                       DataTypeEnum::to_string(type_));
   }
 
   virtual ExprNodeType::Enum node_type() const noexcept override {
