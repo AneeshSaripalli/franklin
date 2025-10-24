@@ -74,6 +74,7 @@ class ASTNode {
 public:
   virtual DataTypeEnum::Enum result() const noexcept = 0;
   virtual std::string to_string() const noexcept = 0;
+  virtual std::string enriched_representation() const noexcept = 0;
 };
 
 class ExprNode : public ASTNode {
@@ -99,6 +100,10 @@ public:
   auto name() const noexcept { return col_name_; }
 
   virtual std::string to_string() const noexcept override {
+    return fmt::format("({})", col_name_);
+  }
+
+  virtual std::string enriched_representation() const noexcept override {
     return fmt::format("ColRef(name={})", col_name_);
   }
 };
@@ -190,6 +195,10 @@ public:
   virtual DataTypeEnum::Enum result() const noexcept override { return type_; }
 
   virtual std::string to_string() const noexcept override {
+    return fmt::format("({})", literal_);
+  }
+
+  virtual std::string enriched_representation() const noexcept override {
     return fmt::format("LiteralNode(literal={},type={})", literal_,
                        DataTypeEnum::to_string(type_));
   }
@@ -212,9 +221,29 @@ public:
   auto right() const noexcept { return right_.get(); }
 
   virtual std::string to_string() const noexcept {
-    return fmt::format("BinaryOpNode(op={},left={},right={})",
-                       BinaryOp::to_string(op_), left_->to_string(),
+    char op_char;
+    switch (op_) {
+    case BinaryOp::ADD:
+      op_char = '+';
+      break;
+    case BinaryOp::SUB:
+      op_char = '-';
+      break;
+    case BinaryOp::MUL:
+      op_char = '*';
+      break;
+    default:
+      op_char = '?';
+      break;
+    }
+    return fmt::format("({}{}{})", left_->to_string(), op_char,
                        right_->to_string());
+  }
+
+  virtual std::string enriched_representation() const noexcept {
+    return fmt::format(
+        "BinaryOpNode(op={},left={},right={})", BinaryOp::to_string(op_),
+        left_->enriched_representation(), right_->enriched_representation());
   }
 };
 

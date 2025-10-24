@@ -89,7 +89,8 @@ TEST(ParserTest, OpPrecedence) {
     auto parse_result = parse(input_string);
     EXPECT_TRUE(parse_result_ok(parse_result));
     auto const result = extract_result(std::move(parse_result));
-    std::cout << result->to_string() << std::endl;
+    // std::cout << result->to_string() << std::endl;
+    EXPECT_EQ(result->to_string(), "(((a)*(b))+(c))");
   }
   {
     const auto input_string = "(a*b+c)";

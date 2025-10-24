@@ -92,6 +92,7 @@ ParseResult parse(std::string_view data) {
   std::vector<std::pair<char, ::ssize_t>> op_st{};
 
   auto apply_last_op = [&]() {
+    FRANKLIN_ASSERT(!op_st.empty());
     const auto [op_ch, op_index] = op_st.back();
     op_st.pop_back();
 
@@ -142,16 +143,28 @@ ParseResult parse(std::string_view data) {
         apply_last_op();
       }
       // op stack is a dummy op
+      FRANKLIN_ASSERT(!op_st.empty());
+      FRANKLIN_ASSERT(op_st.back().first == SCOPE_OPEN);
       op_st.pop_back();
 
-      // expr has a nullptr, do the same
-      auto expr_st_head = std::move(*expr_st.rbegin());
-      expr_st.pop_back();
-      expr_st.pop_back();
-      expr_st.push_back(std::move(expr_st_head));
+      // expr has a nullptr sentinel, handle it
+      FRANKLIN_ASSERT(expr_st.size() >= 1);
+      if (expr_st.size() == 1) {
+        // Empty parentheses case: only sentinel present
+        FRANKLIN_ASSERT(expr_st.back() == nullptr);
+        // Keep the nullptr (represents empty expression)
+      } else {
+        // Normal case: sentinel + result
+        FRANKLIN_ASSERT(expr_st.size() >= 2);
+        FRANKLIN_ASSERT(expr_st[expr_st.size() - 2] == nullptr);
+        auto expr_st_head = std::move(*expr_st.rbegin());
+        expr_st.pop_back();
+        expr_st.pop_back();
+        expr_st.push_back(std::move(expr_st_head));
+      }
     } else {
       expr_st.emplace_back(
-          std::make_unique<ColRef>(std::string{1, ch}, DataTypeEnum::Unknown));
+          std::make_unique<ColRef>(std::string(1, ch), DataTypeEnum::Unknown));
     }
   };
 
